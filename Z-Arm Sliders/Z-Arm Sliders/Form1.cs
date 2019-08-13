@@ -70,15 +70,15 @@ namespace Z_Arm_Sliders
 
                 if (task.IsFaulted)
                 {
-                    debugTextbox.AppendText("No net port initial\n");
+                    debugTextbox.AppendText("No net port initial\r\n");
                 }
                 if (task.IsCanceled)
                 {
-                    debugTextbox.AppendText("Cancelled\n");
+                    debugTextbox.AppendText("Cancelled\r\n");
                 }
                 if (task.IsCompleted)
                 {
-                    debugTextbox.AppendText("Net port initial completed\n");
+                    debugTextbox.AppendText("Net port initial completed\r\n");
                 }
                 if (task.Exception != null)
                 {
@@ -94,7 +94,7 @@ namespace Z_Arm_Sliders
             // Wait for net_port_initial to complete
             await Task.Delay(1200);
 
-            debugTextbox.AppendText("Finding Z-Arm. ");
+            debugTextbox.AppendText("Finding Z-Arm. \r\n");
 
             bool found = false;
             try
@@ -105,7 +105,7 @@ namespace Z_Arm_Sliders
                     {
                         zArmId = i;
                         found = true;
-                        debugTextbox.AppendText($"Id: {i}\n");
+                        debugTextbox.AppendText($"Id: {i}\r\n");
                         break;
                     }
                 }
@@ -118,7 +118,7 @@ namespace Z_Arm_Sliders
 
             if (!found)
             {
-                debugTextbox.AppendText("No arm found. Retry.\n");
+                debugTextbox.AppendText("No arm found. Retry.\r\n");
                 return;
             }
 
@@ -130,7 +130,7 @@ namespace Z_Arm_Sliders
             while (!isConnected)
             {
                 isConnected = await Task.Factory.StartNew(() => robot.is_connected());
-                debugTextbox.AppendText($"Attempting to connect to Z-Arm {zArmId}: {isConnected}\n");
+                debugTextbox.AppendText($"Attempting to connect to Z-Arm {zArmId}: {isConnected}\r\n");
                 if (++retryCount > 3)
                 {
                     break;
@@ -140,7 +140,7 @@ namespace Z_Arm_Sliders
 
             if (retryCount >= 3)
             {
-                debugTextbox.AppendText($"Could not connect. Retry.\n");
+                debugTextbox.AppendText($"Could not connect. Retry.\r\n");
                 return;
             }
 
@@ -149,7 +149,7 @@ namespace Z_Arm_Sliders
             while (ret != 1)
             {
                 ret = await Task.Factory.StartNew(() => robot.initial(generation, verticalReach));
-                debugTextbox.AppendText($"Initializing: {ret} = {initialDebugMap[ret]}\n");
+                debugTextbox.AppendText($"Initializing: {ret} = {initialDebugMap[ret]}\r\n");
                 if (++retryCount > 3)
                 {
                     break;
@@ -159,7 +159,7 @@ namespace Z_Arm_Sliders
 
             if (ret != 1)
             {
-                debugTextbox.AppendText($"Could not initialize Z-Arm Id {zArmId}, return value: {ret}\n");
+                debugTextbox.AppendText($"Could not initialize Z-Arm Id {zArmId}, return value: {ret}\r\n");
                 return;
             }
             else
@@ -167,7 +167,7 @@ namespace Z_Arm_Sliders
                 robot.unlock_position();
                 robot.set_arm_length(armLength, armLength);
                 robot.set_catch_or_release_accuracy(0.5f);
-                debugTextbox.AppendText($"Z Arm Id {zArmId} Initialized!\n");
+                debugTextbox.AppendText($"Z Arm Id {zArmId} Initialized!\r\n");
 
                 SetManualControls(true);
             }
@@ -343,6 +343,120 @@ namespace Z_Arm_Sliders
             { }
         }
 
+        Task task4 = null;
+        CancellationTokenSource cancellationSource4;
+        bool looping4 = false;
+        private async void printCoordsButton_Click(object sender, EventArgs e)
+        {
+            if (!looping4)
+            {
+                if (task4 != null)
+                {
+                    // Wait for any existing task to end.
+                    await task4;
+                }
+
+                SetManualControls(false);
+
+                looping4 = true;
+                cancellationSource4 = new CancellationTokenSource();
+
+                debugTextbox.AppendText("Logging started\r\n");
+
+                task4 = Task.Factory.StartNew(async (cancellationToken) =>
+                {
+                    CancellationToken token = (CancellationToken)cancellationToken;
+
+                    while (true)
+                    {
+                        if (token.IsCancellationRequested)
+                            return;
+
+                        robot.get_scara_param();
+                        //robot.get_robot_real_coor();
+
+                        AppendTextBox(debugTextbox, $"X:{robot.x:0.0000},\tY: {robot.y:0.0000},\tZ:{robot.z:0.0000}\r\n");
+                        //AppendTextBox(debugTextbox, $"X:{robot.real_x:0.0000},\tY: {robot.real_y:0.0000},\tZ:{robot.real_z:0.0000}\r\n");
+
+                        await Task.Delay(50);
+                    }
+                }, cancellationSource4.Token);
+            }
+            else
+            {
+                looping4 = false;
+                cancellationSource4.Cancel(false);
+                debugTextbox.AppendText("Logging stoppe\r\n");
+                SetManualControls(true);
+            }
+        }
+        
+        Task task3 = null;
+        CancellationTokenSource cancellationSource3;
+        bool looping3 = false;
+        private async void circleButton_Click(object sender, EventArgs e)
+        {
+            if (!looping3)
+            {
+                if (task3 != null)
+                {
+                    // Wait for any existing task to end.
+                    await task3;
+                }
+
+                SetManualControls(false);
+
+                looping3 = true;
+                cancellationSource3 = new CancellationTokenSource();
+
+                debugTextbox.AppendText("Circle started\r\n");
+
+                task3 = Task.Factory.StartNew(async (cancellationToken) =>
+                {
+                    CancellationToken token = (CancellationToken)cancellationToken;
+                    
+                    int[][] coords = new int[][]
+                    {
+                        // x, y, z, rotation, speed, accel, interpolation, move mode
+                        new int[] { 50, -50, zAxisHeight, wristAngleDeg, angularSpeed, 50, 1, 2 },
+                        new int[] { 50, -100, zAxisHeight, wristAngleDeg, angularSpeed, 50, 1, 2 },
+                        new int[] { 100, -100, zAxisHeight, wristAngleDeg, angularSpeed, 50, 1, 2 },
+                        new int[] { 100, -50, zAxisHeight, wristAngleDeg, angularSpeed, 50, 1, 2 },
+                    };
+
+                    while (true)
+                    {
+                        foreach (int[] coord in coords)
+                        {
+                            robot.set_position_move(coord[0], coord[1], coord[2], coord[3], coord[4], coord[5], coord[6], coord[7]);
+
+                            while (!robot.is_robot_goto_target())
+                            {
+                                if (token.IsCancellationRequested)
+                                    return;
+
+                                robot.get_scara_param();
+
+                                SetTrackbar(wristTrackbar, wristTextbox, (int)robot.rotation);
+                                SetTrackbar(elbowTrackbar, elbowTextbox, (int)robot.angle2);
+                                SetTrackbar(shoulderTrackBar, shoulderTextbox, (int)robot.angle1);
+                                SetTrackbar(zAxisTrackbar, zAxisTextbox, (int)robot.z);
+
+                                await Task.Delay(50);
+                            }
+                        }
+                    }
+                }, cancellationSource3.Token);
+            }
+            else
+            {
+                looping3 = false;
+                cancellationSource3.Cancel(false);
+                debugTextbox.AppendText("Circling stopped\r\n");
+                SetManualControls(true);
+            }
+        }
+
         Task task = null;
         CancellationTokenSource cancellationSource;
         bool looping = false;
@@ -361,7 +475,7 @@ namespace Z_Arm_Sliders
                 looping = true;
                 cancellationSource = new CancellationTokenSource();
 
-                debugTextbox.AppendText("Looping started");
+                debugTextbox.AppendText("Looping started\r\n");
 
                 task = Task.Factory.StartNew(async (cancellationToken) =>
                 {
@@ -402,7 +516,7 @@ namespace Z_Arm_Sliders
             {
                 looping = false;
                 cancellationSource.Cancel(false);
-                debugTextbox.AppendText("Looping stopped");
+                debugTextbox.AppendText("Looping stopped\r\n");
                 SetManualControls(true);
             }
         }
@@ -417,7 +531,7 @@ namespace Z_Arm_Sliders
 
                 teaching = true;
                 teachButton.Text = "!Teach";
-                debugTextbox.AppendText("Teaching mode enabled\n");
+                debugTextbox.AppendText("Teaching mode enabled\r\n");
                 robot.set_drag_teach(true);
 
                 cancellationSource2 = new CancellationTokenSource();
@@ -436,13 +550,19 @@ namespace Z_Arm_Sliders
                         SetTrackbar(shoulderTrackBar, shoulderTextbox, (int)robot.angle1);
                         SetTrackbar(zAxisTrackbar, zAxisTextbox, (int)robot.z);
 
-                        if (i++ % 10 == 0)
-                        {
-                            AppendTextBox(debugTextbox, $"wrist: {robot.rotation}, elbow: {robot.angle2}, shoulder: {robot.angle1}, Z: {robot.z}\n");
-                            Console.WriteLine($"wrist: {robot.rotation}, elbow: {robot.angle2}, shoulder: {robot.angle1}, Z: {robot.z}");
-                        }
+                        //if (i++ % 10 == 0)
+                        //{
+                            AppendTextBox(debugTextbox, 
+                                $"A1: {robot.angle1:0.0000},\t" +
+                                $"A2: {robot.angle2:0.0000},\t" +
+                                $"A3: {robot.rotation:0.0000},\t" +
+                                $"X:{ robot.x:0.0000},\t" +
+                                $"Y: { robot.y:0.0000},\t" +
+                                $"Z: { robot.z:0.0000}\r\n");
+                            //Console.WriteLine($"wrist: {robot.rotation}, elbow: {robot.angle2}, shoulder: {robot.angle1}, Z: {robot.z}");
+                        //}
 
-                        await Task.Delay(100);
+                        await Task.Delay(50);
                     }
 
                 }, cancellationSource2.Token);
@@ -452,7 +572,7 @@ namespace Z_Arm_Sliders
                 teaching = false;
                 cancellationSource2.Cancel(false);
                 teachButton.Text = "Teach";
-                debugTextbox.AppendText("Teaching mode disabled\n");
+                debugTextbox.AppendText("Teaching mode disabled\r\n");
                 robot.set_drag_teach(false);
                 SetManualControls(true);
             }
@@ -490,7 +610,7 @@ namespace Z_Arm_Sliders
             textbox.Text = value.ToString();
         }
 
-        private void SetManualControls(bool enabled)
+        private void SetManualControls(bool enabled, bool zEnabled = false)
         {
             homeButton.Enabled = enabled;
             wristTrackbar.Enabled = enabled;
@@ -500,7 +620,111 @@ namespace Z_Arm_Sliders
             wristTextbox.Enabled = enabled;
             elbowTextbox.Enabled = enabled;
             shoulderTextbox.Enabled = enabled;
-            zAxisTextbox.Enabled = enabled;
+            zAxisTextbox.Enabled = zEnabled;
+        }
+
+        // This does nothing.
+        bool servoState = true;
+        private void ServoState_Click(object sender, EventArgs e)
+        {
+            if (servoState)
+            {
+                robot.servo_off();
+                servoState = false;
+                servoStateButton.Text = "Servo On";
+                AppendTextBox(debugTextbox, "Servo off\r\n");
+            }
+            else
+            {
+                robot.servo_on();
+                servoState = true;
+                servoStateButton.Text = "Servo Off";
+                AppendTextBox(debugTextbox, "Servo on\r\n");
+            }
+        }
+
+        Task task5 = null;
+        CancellationTokenSource cancellationSource5;
+        bool looping5 = false;
+        private async void RndButton_Click(object sender, EventArgs e)
+        {
+            if (!looping5)
+            {
+                if (task5 != null)
+                {
+                    // Wait for any existing task to end.
+                    await task5;
+                }
+
+                SetManualControls(false, zEnabled: true);
+
+                looping5 = true;
+                cancellationSource5 = new CancellationTokenSource();
+
+                debugTextbox.AppendText("Function1 started\r\n");
+
+                task5 = Task.Factory.StartNew(async (cancellationToken) =>
+                {
+                    CancellationToken token = (CancellationToken)cancellationToken;
+
+                    Random r = new Random();
+
+                    while (true)
+                    {
+                        int rnd0 = int.Parse(textBoxRnd1.Text);
+                        int rnd1 = int.Parse(textBoxRnd2.Text);
+                        int mode = 1;
+
+                        int[][] coords = new int[][]
+                        {
+                                // x, y, z, rotation, speed, accel, interpolation, move mode
+                                //new int[] { 0, -200, zAxisHeight, wristAngleDeg, angularSpeed + r.Next(rnd0, rnd1), 50 + r.Next(rnd0, rnd1), 1, mode },
+                                //new int[] { 200,   -200, zAxisHeight, wristAngleDeg, angularSpeed + r.Next(rnd0, rnd1), 50 + r.Next(rnd0, rnd1), 1, mode },
+                                //new int[] { 200, 200, zAxisHeight, wristAngleDeg, angularSpeed + r.Next(rnd0, rnd1), 50 + r.Next(rnd0, rnd1), 1, mode },
+                                //new int[] { 0, 200, zAxisHeight, wristAngleDeg, angularSpeed + r.Next(rnd0, rnd1), 50 + r.Next(rnd0, rnd1), 1, mode },
+                                //new int[] { 100, 0, zAxisHeight-50, wristAngleDeg, angularSpeed + r.Next(rnd0, rnd1), 50 + r.Next(rnd0, rnd1), 1, mode },
+                                new int[] { 0, -200, zAxisHeight, r.Next(0, 360), angularSpeed + r.Next(rnd0, rnd1), 50 + r.Next(rnd0, rnd1), 1, mode },
+                                new int[] { 200,   -200, zAxisHeight, r.Next(0, 360), angularSpeed + r.Next(rnd0, rnd1), 50 + r.Next(rnd0, rnd1), 1, mode },
+                                new int[] { 200, 200, zAxisHeight, r.Next(0, 360), angularSpeed + r.Next(rnd0, rnd1), 50 + r.Next(rnd0, rnd1), 1, mode },
+                                new int[] { 0, 200, zAxisHeight, r.Next(0, 360), angularSpeed + r.Next(rnd0, rnd1), 50 + r.Next(rnd0, rnd1), 1, mode },
+                                new int[] { 100, 0, zAxisHeight-50, r.Next(0, 360), angularSpeed + r.Next(rnd0, rnd1), 50 + r.Next(rnd0, rnd1), 1, mode },
+                        };
+
+                        foreach (int[] coord in coords)
+                        {
+                            robot.set_position_move(coord[0], coord[1], coord[2], coord[3], coord[4], coord[5], coord[6], coord[7]);
+                            AppendTextBox(debugTextbox, string.Join(",", coord) + "\r\n");
+
+                            while (!robot.is_robot_goto_target())
+                            {
+                                if (token.IsCancellationRequested)
+                                    return;
+
+                                robot.get_scara_param();
+
+                                SetTrackbar(wristTrackbar, wristTextbox, (int)robot.rotation);
+                                SetTrackbar(elbowTrackbar, elbowTextbox, (int)robot.angle2);
+                                SetTrackbar(shoulderTrackBar, shoulderTextbox, (int)robot.angle1);
+                                SetTrackbar(zAxisTrackbar, zAxisTextbox, (int)robot.z);
+
+                                await Task.Delay(50);
+                            }
+                        }
+                    }
+                }, cancellationSource5.Token);
+            }
+            else
+            {
+                looping5 = false;
+                cancellationSource5.Cancel(false);
+                debugTextbox.AppendText("Function1 stopped\r\n");
+                SetManualControls(true);
+            }
+        }
+
+        private void Button1_Click(object sender, EventArgs e)
+        {
+
         }
     }
 }

@@ -1,0 +1,30 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>netcoreapp2.1</TargetFramework>
+    <RootNamespace>Z_Arm_Class</RootNamespace>
+    <ApplicationIcon />
+    <StartupObject />
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+    <Prefer32Bit>true</Prefer32Bit>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <WarningsAsErrors />
+    <OutputPath>bin\Debug\</OutputPath>
+    <PlatformTarget>x86</PlatformTarget>
+  </PropertyGroup>
+
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+    <Exec Command="xcopy /I /Y /R &quot;$(ProjectDir)Lib&quot; &quot;$(ProjectDir)$(OutDir)&quot;" />
+  </Target>
+
+  <ItemGroup>
+    <Reference Include="ClassLibrary_ControlBean">
+      <HintPath>Lib\ClassLibrary_ControlBean.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+</Project>

@@ -49,6 +49,13 @@
             this.angularSpeedLabel = new System.Windows.Forms.Label();
             this.stopStartButton = new System.Windows.Forms.Button();
             this.teachButton = new System.Windows.Forms.Button();
+            this.circleButton = new System.Windows.Forms.Button();
+            this.printCoords = new System.Windows.Forms.Button();
+            this.servoStateButton = new System.Windows.Forms.Button();
+            this.rndButton = new System.Windows.Forms.Button();
+            this.textBoxRnd1 = new System.Windows.Forms.TextBox();
+            this.textBoxRnd2 = new System.Windows.Forms.TextBox();
+            this.recordBtn = new System.Windows.Forms.Button();
             ((System.ComponentModel.ISupportInitialize)(this.wristTrackbar)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.elbowTrackbar)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.shoulderTrackBar)).BeginInit();
@@ -70,24 +77,24 @@
             this.debugTextbox.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
             | System.Windows.Forms.AnchorStyles.Left) 
             | System.Windows.Forms.AnchorStyles.Right)));
-            this.debugTextbox.Location = new System.Drawing.Point(12, 285);
+            this.debugTextbox.Location = new System.Drawing.Point(12, 324);
             this.debugTextbox.Multiline = true;
             this.debugTextbox.Name = "debugTextbox";
             this.debugTextbox.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
-            this.debugTextbox.Size = new System.Drawing.Size(467, 204);
+            this.debugTextbox.Size = new System.Drawing.Size(497, 292);
             this.debugTextbox.TabIndex = 1;
             // 
             // wristTrackbar
             // 
             this.wristTrackbar.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left) 
             | System.Windows.Forms.AnchorStyles.Right)));
-            this.wristTrackbar.Location = new System.Drawing.Point(74, 81);
+            this.wristTrackbar.Location = new System.Drawing.Point(73, 120);
             this.wristTrackbar.Maximum = 180;
             this.wristTrackbar.Minimum = -180;
             this.wristTrackbar.Name = "wristTrackbar";
             this.wristTrackbar.RightToLeft = System.Windows.Forms.RightToLeft.Yes;
             this.wristTrackbar.RightToLeftLayout = true;
-            this.wristTrackbar.Size = new System.Drawing.Size(406, 45);
+            this.wristTrackbar.Size = new System.Drawing.Size(436, 45);
             this.wristTrackbar.TabIndex = 2;
             this.wristTrackbar.TickFrequency = 10;
             this.wristTrackbar.Scroll += new System.EventHandler(this.wristTrackbar_Scroll);
@@ -97,7 +104,7 @@
             // labelWrist
             // 
             this.labelWrist.AutoSize = true;
-            this.labelWrist.Location = new System.Drawing.Point(19, 81);
+            this.labelWrist.Location = new System.Drawing.Point(18, 120);
             this.labelWrist.Name = "labelWrist";
             this.labelWrist.Size = new System.Drawing.Size(31, 13);
             this.labelWrist.TabIndex = 3;
@@ -106,7 +113,7 @@
             // label2
             // 
             this.label2.AutoSize = true;
-            this.label2.Location = new System.Drawing.Point(19, 132);
+            this.label2.Location = new System.Drawing.Point(18, 171);
             this.label2.Name = "label2";
             this.label2.Size = new System.Drawing.Size(36, 13);
             this.label2.TabIndex = 4;
@@ -115,7 +122,7 @@
             // label3
             // 
             this.label3.AutoSize = true;
-            this.label3.Location = new System.Drawing.Point(19, 183);
+            this.label3.Location = new System.Drawing.Point(18, 222);
             this.label3.Name = "label3";
             this.label3.Size = new System.Drawing.Size(49, 13);
             this.label3.TabIndex = 5;
@@ -124,7 +131,7 @@
             // label4
             // 
             this.label4.AutoSize = true;
-            this.label4.Location = new System.Drawing.Point(19, 234);
+            this.label4.Location = new System.Drawing.Point(18, 273);
             this.label4.Name = "label4";
             this.label4.Size = new System.Drawing.Size(36, 13);
             this.label4.TabIndex = 6;
@@ -134,13 +141,13 @@
             // 
             this.elbowTrackbar.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left) 
             | System.Windows.Forms.AnchorStyles.Right)));
-            this.elbowTrackbar.Location = new System.Drawing.Point(75, 132);
+            this.elbowTrackbar.Location = new System.Drawing.Point(74, 171);
             this.elbowTrackbar.Maximum = 164;
             this.elbowTrackbar.Minimum = -164;
             this.elbowTrackbar.Name = "elbowTrackbar";
             this.elbowTrackbar.RightToLeft = System.Windows.Forms.RightToLeft.Yes;
             this.elbowTrackbar.RightToLeftLayout = true;
-            this.elbowTrackbar.Size = new System.Drawing.Size(404, 45);
+            this.elbowTrackbar.Size = new System.Drawing.Size(434, 45);
             this.elbowTrackbar.TabIndex = 7;
             this.elbowTrackbar.TickFrequency = 10;
             this.elbowTrackbar.Scroll += new System.EventHandler(this.elbowTrackbar_Scroll);
@@ -151,13 +158,13 @@
             // 
             this.shoulderTrackBar.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left) 
             | System.Windows.Forms.AnchorStyles.Right)));
-            this.shoulderTrackBar.Location = new System.Drawing.Point(75, 183);
+            this.shoulderTrackBar.Location = new System.Drawing.Point(74, 222);
             this.shoulderTrackBar.Maximum = 90;
             this.shoulderTrackBar.Minimum = -90;
             this.shoulderTrackBar.Name = "shoulderTrackBar";
             this.shoulderTrackBar.RightToLeft = System.Windows.Forms.RightToLeft.Yes;
             this.shoulderTrackBar.RightToLeftLayout = true;
-            this.shoulderTrackBar.Size = new System.Drawing.Size(405, 45);
+            this.shoulderTrackBar.Size = new System.Drawing.Size(435, 45);
             this.shoulderTrackBar.TabIndex = 8;
             this.shoulderTrackBar.TickFrequency = 10;
             this.shoulderTrackBar.Scroll += new System.EventHandler(this.shoulderTrackBar_Scroll);
@@ -168,11 +175,11 @@
             // 
             this.zAxisTrackbar.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left) 
             | System.Windows.Forms.AnchorStyles.Right)));
-            this.zAxisTrackbar.Location = new System.Drawing.Point(75, 234);
+            this.zAxisTrackbar.Location = new System.Drawing.Point(74, 273);
             this.zAxisTrackbar.Maximum = 0;
             this.zAxisTrackbar.Minimum = -310;
             this.zAxisTrackbar.Name = "zAxisTrackbar";
-            this.zAxisTrackbar.Size = new System.Drawing.Size(405, 45);
+            this.zAxisTrackbar.Size = new System.Drawing.Size(435, 45);
             this.zAxisTrackbar.TabIndex = 9;
             this.zAxisTrackbar.TickFrequency = 10;
             this.zAxisTrackbar.Scroll += new System.EventHandler(this.zAxisTrackbar_Scroll);
@@ -182,7 +189,7 @@
             // speedTextbox
             // 
             this.speedTextbox.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
-            this.speedTextbox.Location = new System.Drawing.Point(379, 42);
+            this.speedTextbox.Location = new System.Drawing.Point(409, 42);
             this.speedTextbox.Name = "speedTextbox";
             this.speedTextbox.Size = new System.Drawing.Size(100, 20);
             this.speedTextbox.TabIndex = 10;
@@ -193,7 +200,7 @@
             // 
             this.speedLabel.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
             this.speedLabel.AutoSize = true;
-            this.speedLabel.Location = new System.Drawing.Point(256, 45);
+            this.speedLabel.Location = new System.Drawing.Point(286, 45);
             this.speedLabel.Name = "speedLabel";
             this.speedLabel.Size = new System.Drawing.Size(117, 13);
             this.speedLabel.TabIndex = 11;
@@ -201,28 +208,28 @@
             // 
             // wristTextbox
             // 
-            this.wristTextbox.Location = new System.Drawing.Point(22, 98);
+            this.wristTextbox.Location = new System.Drawing.Point(21, 137);
             this.wristTextbox.Name = "wristTextbox";
             this.wristTextbox.Size = new System.Drawing.Size(46, 20);
             this.wristTextbox.TabIndex = 12;
             // 
             // elbowTextbox
             // 
-            this.elbowTextbox.Location = new System.Drawing.Point(22, 149);
+            this.elbowTextbox.Location = new System.Drawing.Point(21, 188);
             this.elbowTextbox.Name = "elbowTextbox";
             this.elbowTextbox.Size = new System.Drawing.Size(46, 20);
             this.elbowTextbox.TabIndex = 13;
             // 
             // shoulderTextbox
             // 
-            this.shoulderTextbox.Location = new System.Drawing.Point(22, 200);
+            this.shoulderTextbox.Location = new System.Drawing.Point(21, 239);
             this.shoulderTextbox.Name = "shoulderTextbox";
             this.shoulderTextbox.Size = new System.Drawing.Size(46, 20);
             this.shoulderTextbox.TabIndex = 14;
             // 
             // zAxisTextbox
             // 
-            this.zAxisTextbox.Location = new System.Drawing.Point(22, 251);
+            this.zAxisTextbox.Location = new System.Drawing.Point(21, 290);
             this.zAxisTextbox.Name = "zAxisTextbox";
             this.zAxisTextbox.Size = new System.Drawing.Size(46, 20);
             this.zAxisTextbox.TabIndex = 15;
@@ -240,7 +247,7 @@
             // angularSpeedTextbox
             // 
             this.angularSpeedTextbox.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
-            this.angularSpeedTextbox.Location = new System.Drawing.Point(379, 16);
+            this.angularSpeedTextbox.Location = new System.Drawing.Point(409, 16);
             this.angularSpeedTextbox.Name = "angularSpeedTextbox";
             this.angularSpeedTextbox.Size = new System.Drawing.Size(100, 20);
             this.angularSpeedTextbox.TabIndex = 17;
@@ -251,7 +258,7 @@
             // 
             this.angularSpeedLabel.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
             this.angularSpeedLabel.AutoSize = true;
-            this.angularSpeedLabel.Location = new System.Drawing.Point(253, 19);
+            this.angularSpeedLabel.Location = new System.Drawing.Point(283, 19);
             this.angularSpeedLabel.Name = "angularSpeedLabel";
             this.angularSpeedLabel.Size = new System.Drawing.Size(120, 13);
             this.angularSpeedLabel.TabIndex = 18;
@@ -277,11 +284,84 @@
             this.teachButton.UseVisualStyleBackColor = true;
             this.teachButton.Click += new System.EventHandler(this.teachButton_Click);
             // 
+            // circleButton
+            // 
+            this.circleButton.Location = new System.Drawing.Point(202, 39);
+            this.circleButton.Name = "circleButton";
+            this.circleButton.Size = new System.Drawing.Size(45, 23);
+            this.circleButton.TabIndex = 19;
+            this.circleButton.Text = "Circle";
+            this.circleButton.UseVisualStyleBackColor = true;
+            this.circleButton.Click += new System.EventHandler(this.circleButton_Click);
+            // 
+            // printCoords
+            // 
+            this.printCoords.Location = new System.Drawing.Point(146, 69);
+            this.printCoords.Name = "printCoords";
+            this.printCoords.Size = new System.Drawing.Size(49, 23);
+            this.printCoords.TabIndex = 20;
+            this.printCoords.Text = "print";
+            this.printCoords.UseVisualStyleBackColor = true;
+            this.printCoords.Click += new System.EventHandler(this.printCoordsButton_Click);
+            // 
+            // servoStateButton
+            // 
+            this.servoStateButton.Location = new System.Drawing.Point(202, 69);
+            this.servoStateButton.Name = "servoStateButton";
+            this.servoStateButton.Size = new System.Drawing.Size(72, 23);
+            this.servoStateButton.TabIndex = 21;
+            this.servoStateButton.Text = "ServoOff";
+            this.servoStateButton.UseVisualStyleBackColor = true;
+            this.servoStateButton.Click += new System.EventHandler(this.ServoState_Click);
+            // 
+            // rndButton
+            // 
+            this.rndButton.Location = new System.Drawing.Point(286, 68);
+            this.rndButton.Name = "rndButton";
+            this.rndButton.Size = new System.Drawing.Size(75, 23);
+            this.rndButton.TabIndex = 22;
+            this.rndButton.Text = "Function1";
+            this.rndButton.UseVisualStyleBackColor = true;
+            this.rndButton.Click += new System.EventHandler(this.RndButton_Click);
+            // 
+            // textBoxRnd1
+            // 
+            this.textBoxRnd1.Location = new System.Drawing.Point(408, 68);
+            this.textBoxRnd1.Name = "textBoxRnd1";
+            this.textBoxRnd1.Size = new System.Drawing.Size(100, 20);
+            this.textBoxRnd1.TabIndex = 23;
+            this.textBoxRnd1.Text = "50";
+            // 
+            // textBoxRnd2
+            // 
+            this.textBoxRnd2.Location = new System.Drawing.Point(409, 94);
+            this.textBoxRnd2.Name = "textBoxRnd2";
+            this.textBoxRnd2.Size = new System.Drawing.Size(100, 20);
+            this.textBoxRnd2.TabIndex = 24;
+            this.textBoxRnd2.Text = "100";
+            // 
+            // recordBtn
+            // 
+            this.recordBtn.Location = new System.Drawing.Point(13, 68);
+            this.recordBtn.Name = "recordBtn";
+            this.recordBtn.Size = new System.Drawing.Size(75, 23);
+            this.recordBtn.TabIndex = 25;
+            this.recordBtn.Text = "Record";
+            this.recordBtn.UseVisualStyleBackColor = true;
+            this.recordBtn.Click += new System.EventHandler(this.Button1_Click);
+            // 
             // Form1
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(492, 501);
+            this.ClientSize = new System.Drawing.Size(522, 628);
+            this.Controls.Add(this.recordBtn);
+            this.Controls.Add(this.textBoxRnd2);
+            this.Controls.Add(this.textBoxRnd1);
+            this.Controls.Add(this.rndButton);
+            this.Controls.Add(this.servoStateButton);
+            this.Controls.Add(this.printCoords);
+            this.Controls.Add(this.circleButton);
             this.Controls.Add(this.angularSpeedLabel);
             this.Controls.Add(this.angularSpeedTextbox);
             this.Controls.Add(this.stopStartButton);
@@ -338,6 +418,13 @@
         private System.Windows.Forms.Label angularSpeedLabel;
         private System.Windows.Forms.Button stopStartButton;
         private System.Windows.Forms.Button teachButton;
+        private System.Windows.Forms.Button circleButton;
+        private System.Windows.Forms.Button printCoords;
+        private System.Windows.Forms.Button servoStateButton;
+        private System.Windows.Forms.Button rndButton;
+        private System.Windows.Forms.TextBox textBoxRnd1;
+        private System.Windows.Forms.TextBox textBoxRnd2;
+        private System.Windows.Forms.Button recordBtn;
     }
 }
 

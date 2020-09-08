@@ -56,6 +56,7 @@
             this.textBoxRnd1 = new System.Windows.Forms.TextBox();
             this.textBoxRnd2 = new System.Windows.Forms.TextBox();
             this.recordBtn = new System.Windows.Forms.Button();
+            this.pipeButton = new System.Windows.Forms.Button();
             ((System.ComponentModel.ISupportInitialize)(this.wristTrackbar)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.elbowTrackbar)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.shoulderTrackBar)).BeginInit();
@@ -344,17 +345,28 @@
             // 
             this.recordBtn.Location = new System.Drawing.Point(13, 68);
             this.recordBtn.Name = "recordBtn";
-            this.recordBtn.Size = new System.Drawing.Size(75, 23);
+            this.recordBtn.Size = new System.Drawing.Size(54, 23);
             this.recordBtn.TabIndex = 25;
             this.recordBtn.Text = "Record";
             this.recordBtn.UseVisualStyleBackColor = true;
             this.recordBtn.Click += new System.EventHandler(this.Button1_Click);
+            // 
+            // pipeButton
+            // 
+            this.pipeButton.Location = new System.Drawing.Point(74, 68);
+            this.pipeButton.Name = "pipeButton";
+            this.pipeButton.Size = new System.Drawing.Size(65, 23);
+            this.pipeButton.TabIndex = 26;
+            this.pipeButton.Text = "Pipe";
+            this.pipeButton.UseVisualStyleBackColor = true;
+            this.pipeButton.Click += new System.EventHandler(this.PipeButton_Click);
             // 
             // Form1
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.ClientSize = new System.Drawing.Size(522, 628);
+            this.Controls.Add(this.pipeButton);
             this.Controls.Add(this.recordBtn);
             this.Controls.Add(this.textBoxRnd2);
             this.Controls.Add(this.textBoxRnd1);
@@ -425,6 +437,7 @@
         private System.Windows.Forms.TextBox textBoxRnd1;
         private System.Windows.Forms.TextBox textBoxRnd2;
         private System.Windows.Forms.Button recordBtn;
+        private System.Windows.Forms.Button pipeButton;
     }
 }
 

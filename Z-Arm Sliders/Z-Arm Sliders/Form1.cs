@@ -10,6 +10,9 @@ using System.Windows.Forms;
 using TcpserverExDll;
 using ControlBeanExDll;
 using System.Threading;
+using System.IO.Pipes;
+using Assets;
+using Newtonsoft.Json;
 
 namespace Z_Arm_Sliders
 {
@@ -59,6 +62,8 @@ namespace Z_Arm_Sliders
             verticalSpeed = int.Parse(speedTextbox.Text);
             angularSpeed = int.Parse(angularSpeedTextbox.Text);
         }
+
+
 
         private async void connectButton_Click(object sender, EventArgs e)
         {
@@ -629,14 +634,14 @@ namespace Z_Arm_Sliders
         {
             if (servoState)
             {
-                robot.servo_off();
+               // robot.servo_off();
                 servoState = false;
                 servoStateButton.Text = "Servo On";
                 AppendTextBox(debugTextbox, "Servo off\r\n");
             }
             else
             {
-                robot.servo_on();
+              //  robot.servo_on();
                 servoState = true;
                 servoStateButton.Text = "Servo Off";
                 AppendTextBox(debugTextbox, "Servo on\r\n");
@@ -725,6 +730,47 @@ namespace Z_Arm_Sliders
         private void Button1_Click(object sender, EventArgs e)
         {
 
+        }
+
+        private async void PipeButton_Click(object sender, EventArgs e)
+        {
+            //Create Server Instance
+            NamedPipeServerStream server = new NamedPipeServerStream("ZArmApp", PipeDirection.InOut, 1, PipeTransmissionMode.Byte);
+            //Wait for a client to connect
+            server.WaitForConnection();
+
+            Console.WriteLine("Connected");
+
+            //IFormatter f = new BinaryFormatter();
+            //SetAnglesPacket angles = (SetAnglesPacket)f.Deserialize(server);
+
+
+            //Created stream for reading and writing
+            StreamString serverStream = new StreamString(server);
+
+            //Read from Client
+            await Task.Factory.StartNew(() =>
+            {
+                while (true)
+                {
+                    string dataFromClient = serverStream.ReadString();
+                    Console.WriteLine("Recieved from client: " + dataFromClient);
+
+                    SetAnglesPacket angles = JsonConvert.DeserializeObject<SetAnglesPacket>(dataFromClient);
+
+                    AppendTextBox(
+                        debugTextbox,
+                        $"ShoulderAngle: {angles.ShoulderAngle}, " +
+                        $"ElbowAngle: {angles.ElbowAngle}, " +
+                        $"WristAngle: {angles.WristAngle}, " +
+                        $"Height: {angles.Height}, " +
+                        $"Speed: {angles.Speed}\r\n");
+
+                    float localWristAngle = angles.ShoulderAngle + angles.ElbowAngle + angles.WristAngle;
+
+                    robot.set_angle_move(angles.ShoulderAngle, angles.ElbowAngle, angles.Height, localWristAngle, angles.Speed);
+                }
+            });
         }
     }
 }

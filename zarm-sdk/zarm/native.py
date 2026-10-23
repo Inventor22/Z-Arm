@@ -30,7 +30,7 @@ from typing import Any, Dict, Iterable, Optional, Tuple, Union
 from .backend import Backend, EncoderParam, ScaraParam
 from .errors import LibraryError, NotConnectedError
 from .pe import PeFormatError, read_pe_info
-from .types import require_c_float, require_c_int
+from .types import require_c_float, require_c_int, require_positive_c_float
 
 DLL_NAME = "small_scara_interface.dll"
 REQUIRED_FILES = (DLL_NAME, "share.dll", "server.exe")
@@ -645,8 +645,13 @@ class NativeBackend(Backend):
         return self._lib
 
     def close(self) -> None:
-        """Wait for calls in progress, then free the process-wide slot. The DLL stays loaded."""
+        """Wait for calls in progress, then free the process-wide slot. The DLL stays loaded.
+
+        Refused while a ZArm still holds a client lease on this backend.
+        """
         global _ACTIVE_BACKEND
+        if self.has_clients():
+            raise LibraryError("this NativeBackend is still in use by a ZArm; close that first")
         with self._call_lock, self._stop_lock:
             self._closed = True
         with _STATE_LOCK:
@@ -714,7 +719,8 @@ class NativeBackend(Backend):
         return int(self._robot("robot_unlock_position", card))
 
     def set_arm_length(self, card: int, l1_mm: float, l2_mm: float) -> None:
-        self._robot("robot_set_arm_length", card, *_c_floats(("l1_mm", "l2_mm"), (l1_mm, l2_mm)))
+        lengths = (require_positive_c_float("l1_mm", l1_mm), require_positive_c_float("l2_mm", l2_mm))
+        self._robot("robot_set_arm_length", card, *lengths)
 
     # State
 

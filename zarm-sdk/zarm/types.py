@@ -178,6 +178,14 @@ def require_c_float(name: str, value: object) -> float:
     return number
 
 
+def require_positive_c_float(name: str, value: object) -> float:
+    """A C float that is still > 0 after rounding to float32 (ctypes turns 1e-300 into 0.0)."""
+    number = require_c_float(name, value)
+    if number <= 0 or to_float32(number) <= 0:
+        raise InvalidArgumentError(f"{name} must be > 0 as a C float, got {number:g}")
+    return number
+
+
 def require_c_int(name: str, value: object, low: int = C_INT_MIN, high: int = C_INT_MAX) -> int:
     """An int within [low, high] (ctypes silently wraps ints that do not fit in a C int)."""
     if isinstance(value, bool) or not isinstance(value, int):
@@ -228,8 +236,7 @@ class ZArmConfig:
         if len(self.arm_lengths_mm) != 2:
             raise InvalidArgumentError("arm_lengths_mm must be (l1_mm, l2_mm)")
         for index, length in enumerate(self.arm_lengths_mm):
-            if require_c_float(f"arm_lengths_mm[{index}]", length) <= 0:
-                raise InvalidArgumentError("arm lengths must be positive")
+            require_positive_c_float(f"arm_lengths_mm[{index}]", length)
         for name in (
             "max_joint_speed",
             "max_linear_speed_mm_s",

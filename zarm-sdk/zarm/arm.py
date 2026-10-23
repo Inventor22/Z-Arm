@@ -218,19 +218,23 @@ class ZArm:
                 assert self._card is not None
                 return self._card
             deadline = self._clock() + timeout_s
-            result = self._backend.start_server()
-            if result != ServerStartResult.OK:
-                raise ServerStartError(
-                    f"net_port_initial returned {result}: {describe(coerce(ServerStartResult, result))}"
-                )
-            card = self._find_card(deadline, timeout_s)
-            self._backend.claim(card, self)
-            with self._phase_lock:
-                if self._phase is not ArmPhase.CREATED:
-                    self._backend.release(card, self)
-                    raise ZArmError("this ZArm was closed while connecting")
-                self._card = card
-                self._phase = ArmPhase.CONNECTED
+            self._backend.acquire_client(self)
+            try:
+                result = self._backend.start_server()
+                if result != ServerStartResult.OK:
+                    raise ServerStartError(
+                        f"net_port_initial returned {result}: {describe(coerce(ServerStartResult, result))}"
+                    )
+                card = self._find_card(deadline, timeout_s)
+                self._backend.claim(card, self)
+                with self._phase_lock:
+                    if self._phase is not ArmPhase.CREATED:
+                        raise ZArmError("this ZArm was closed while connecting")
+                    self._card = card
+                    self._phase = ArmPhase.CONNECTED
+            except BaseException:
+                self._backend.release_client(self)
+                raise
             _OPEN_ARMS.add(self)
             _log.info("connected to Z-Arm card %d", card)
             return card
@@ -294,9 +298,11 @@ class ZArm:
     def close(self, *, stop_server: bool = False) -> None:
         """Stop the arm, release it and optionally shut down the vendor server.
 
-        The stop is sent before waiting for any command in progress (for example
-        one blocked behind a vendor message box). ``stop_server`` is skipped
-        with a warning while another ZArm still owns an arm on the same backend.
+        A stop is sent at once, without waiting for a command in progress (one
+        may be blocked behind a vendor message box). Once commands in progress
+        have finished, a second stop covers any motion they started. The vendor
+        server is shared, so ``stop_server`` only shuts it down if no other ZArm
+        is using the backend; the check and the shutdown are atomic.
         """
         with self._phase_lock:
             if self._phase in (ArmPhase.CLOSING, ArmPhase.CLOSED):
@@ -306,22 +312,19 @@ class ZArm:
         card = self._card
         try:
             if connected and card is not None:
-                self._stop_quietly(card, "close")
+                self._stop_quietly(card, "close", logging.INFO)
             with self._lock:
                 if connected and card is not None:
-                    self._backend.release(card, self)
-                    if stop_server:
-                        others = [other for other in self._backend.owned_cards() if other != card]
-                        if others:
-                            _log.warning("not stopping the vendor server: cards %s are still in use", others)
-                        else:
-                            self._backend.close_server()
+                    self._stop_quietly(card, "close, after commands in progress finished", logging.INFO)
+                shut_down = self._backend.release_client(self, stop_server=stop_server and connected)
+                if stop_server and connected and not shut_down:
+                    _log.warning("not stopping the vendor server: it is still in use by another ZArm")
         finally:
             with self._phase_lock:
                 self._phase = ArmPhase.CLOSED
             _OPEN_ARMS.discard(self)
             if self._owns_backend:
-                self._backend.close()
+                self._backend.close_when_unused()
 
     # State
 
@@ -395,7 +398,7 @@ class ZArm:
             with self._lock:
                 card = self._require_initialized("move_joints")
                 start = self.get_state()
-                guard.armed = True
+                self._arm_guard(guard, "move_joints")
                 self._check_move_result(
                     "movej_angle", self._backend.movej_angle(card, *target.as_tuple(), speed, roughly)
                 )
@@ -432,7 +435,7 @@ class ZArm:
                 card = self._require_initialized("move_to_pose")
                 start = self.get_state()
                 self._check_pose_solutions(start, target, lr)
-                guard.armed = True
+                self._arm_guard(guard, "move_to_pose")
                 if lr is None:
                     code = self._backend.movej_xyz(card, *target.as_tuple(), speed, roughly)
                     self._check_move_result("movej_xyz", code)
@@ -462,7 +465,7 @@ class ZArm:
                 card = self._require_initialized("move_linear")
                 start = self.get_state()
                 self._check_linear_path(start, target)
-                guard.armed = True
+                self._arm_guard(guard, "move_linear")
                 self._check_move_result(
                     "movel_xyz", self._backend.movel_xyz(card, *target.as_tuple(), speed_mm_s)
                 )
@@ -492,7 +495,7 @@ class ZArm:
                 problems = self._limits.violations(JointPositions(j1, j2, start.joints.j3_mm, start.joints.j4_deg))
                 if problems:
                     raise SoftLimitError("the other hand configuration is outside the soft limits: " + "; ".join(problems))
-                guard.armed = True
+                self._arm_guard(guard, "change_hand")
                 self._check_move_result("change_attitude", self._backend.change_attitude(card, speed))
             if not wait:
                 return None
@@ -525,7 +528,7 @@ class ZArm:
         self._backend.emergency_stop(self._require_connected("emergency_stop"))
 
     def pause(self) -> None:
-        """Pause the current motion. If the vendor refuses, the SDK stops the arm instead."""
+        """Pause the current motion. Lock-free like stop(). If the vendor refuses, the SDK stops the arm instead."""
         card = self._require_connected("pause")
         with _Guard(self, "pause", armed=True):
             result = self._backend.pause_move(card)
@@ -534,11 +537,12 @@ class ZArm:
 
     def resume(self) -> None:
         """Resume a paused motion. If the vendor refuses, the SDK stops the arm."""
-        card = self._require_connected("resume")
-        with _Guard(self, "resume", armed=True):
-            result = self._backend.resume_move(card)
-            if result != 1:
-                raise CommandError("resume_move", message=f"resume_move returned {result}; the arm was stopped")
+        with self._lock:
+            card = self._require_connected("resume")
+            with _Guard(self, "resume", armed=True):
+                result = self._backend.resume_move(card)
+                if result != 1:
+                    raise CommandError("resume_move", message=f"resume_move returned {result}; the arm was stopped")
 
     def start_homing(self, joint: Joint) -> None:
         """Start homing one joint (``robot_joint_home``); returns once the controller accepts. The joint moves.
@@ -555,7 +559,7 @@ class ZArm:
                 if self.get_state().moving:
                     raise ArmBusyError("start_homing", message="start_homing: the arm is moving; stop it first")
                 self._set_phase(ArmPhase.CONNECTED)
-                guard.armed = True
+                self._arm_guard(guard, "start_homing", initialized=False)
                 result = coerce(HomeResult, self._backend.joint_home(card, number))
                 if result == HomeResult.OK:
                     return
@@ -572,8 +576,9 @@ class ZArm:
     def set_drag_teach(self, enabled: bool) -> None:
         """Enable or disable hand-guiding (drag teach)."""
         enabled = self._checked_flag("enabled", enabled)
-        if not self._backend.set_drag_teach(self._require_connected("set_drag_teach"), enabled):
-            raise CommandError("set_drag_teach", message="set_drag_teach was refused by the vendor library")
+        with self._lock:
+            if not self._backend.set_drag_teach(self._require_connected("set_drag_teach"), enabled):
+                raise CommandError("set_drag_teach", message="set_drag_teach was refused by the vendor library")
 
     def get_drag_teach(self) -> bool:
         return bool(self._backend.get_drag_teach(self._require_connected("get_drag_teach")))
@@ -581,8 +586,9 @@ class ZArm:
     def set_cooperation_mode(self, enabled: bool) -> None:
         """The vendor's "cooperation function" (collaborative mode; exact behaviour unverified)."""
         enabled = self._checked_flag("enabled", enabled)
-        if not self._backend.set_cooperation_fun_state(self._require_connected("set_cooperation_mode"), enabled):
-            raise CommandError("set_cooperation_fun_state", message="set_cooperation_fun_state was refused")
+        with self._lock:
+            if not self._backend.set_cooperation_fun_state(self._require_connected("set_cooperation_mode"), enabled):
+                raise CommandError("set_cooperation_fun_state", message="set_cooperation_fun_state was refused")
 
     def get_cooperation_mode(self) -> bool:
         return bool(self._backend.get_cooperation_fun_state(self._require_connected("get_cooperation_mode")))
@@ -605,12 +611,25 @@ class ZArm:
     def write_digital_output(self, io: int, on: bool) -> None:
         io = self._checked_io(io)
         on = self._checked_flag("on", on)
-        if not self._backend.set_digital_io_out(self._require_connected("write_digital_output"), io, on):
-            raise CommandError(
-                "set_digital_io_out", message=f"set_digital_io_out refused io {io} (invalid io, or not connected)"
-            )
+        with self._lock:
+            if not self._backend.set_digital_io_out(self._require_connected("write_digital_output"), io, on):
+                raise CommandError(
+                    "set_digital_io_out", message=f"set_digital_io_out refused io {io} (invalid io, or not connected)"
+                )
 
     # Internals: lifecycle
+
+    def _arm_guard(self, guard: _Guard, command: str, initialized: bool = True) -> None:
+        """Re-check the phase immediately before a vendor call, then arm the guard.
+
+        A close() that starts in the remaining window is covered by the second
+        stop it sends after commands in progress finish.
+        """
+        if initialized:
+            self._require_initialized(command)
+        else:
+            self._require_connected(command)
+        guard.armed = True
 
     def _set_phase(self, phase: ArmPhase) -> None:
         with self._phase_lock:
@@ -636,10 +655,10 @@ class ZArm:
             return
         self._stop_quietly(card, reason)
 
-    def _stop_quietly(self, card: int, reason: str) -> None:
+    def _stop_quietly(self, card: int, reason: str, level: int = logging.WARNING) -> None:
         """Send a stop. Never raises, so it cannot replace the error being handled."""
         try:
-            _log.warning("fail-safe stop for card %d (%s)", card, reason)
+            _log.log(level, "fail-safe stop for card %d (%s)", card, reason)
             self._backend.stop_move(card)
         except BaseException:
             _log.exception("fail-safe stop for card %d failed (%s)", card, reason)

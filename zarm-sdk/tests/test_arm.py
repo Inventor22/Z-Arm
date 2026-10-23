@@ -447,6 +447,8 @@ class ReviewRegressionTests(ArmTestCase):
             ZArmConfig(max_joint_speed=1e300).validate()
         with self.assertRaises(InvalidArgumentError):
             ZArmConfig(z_travel_mm=2**40).validate()
+        with self.assertRaises(InvalidArgumentError):
+            ZArmConfig(arm_lengths_mm=(1e-300, 200.0)).validate()  # positive, but 0.0 as a C float
 
     def test_cartesian_targets_respect_joint_limits(self):
         limits = JointLimits(j1_deg=(-10.0, 10.0))
@@ -521,16 +523,54 @@ class LifecycleTests(ArmTestCase):
         arm.move_joints(TARGET, speed=10.0, wait=False)
         arm.close()
         self.assertIs(arm.phase, ArmPhase.CLOSED)
-        self.assertEqual(fake.arms[59].stop_count, 1)
+        self.assertTrue(fake.is_stop(59))
+        self.assertEqual(fake.arms[59].stop_count, 2)  # once at once, once after commands in progress
         self.assertIsNone(fake.owner_of(59))
+        self.assertFalse(fake.has_clients())
         arm.close()
         self.assertNotIn("close_server", fake.call_names())
 
     def test_close_always_sends_a_stop(self):
         arm, fake, _ = ready_arm()
         arm.close(stop_server=True)
-        self.assertEqual(fake.arms[59].stop_count, 1)
+        self.assertEqual(fake.arms[59].stop_count, 2)
         self.assertEqual(fake.call_names()[-1], "close_server")
+
+    def test_a_command_racing_close_is_stopped(self):
+        arm, fake, _ = ready_arm()
+        original = fake.movej_angle
+        closers = []
+
+        def racing_movej_angle(*args):
+            closer = threading.Thread(target=arm.close)
+            closers.append(closer)
+            closer.start()
+            for _ in range(500):  # let close() send its first stop before the motion starts
+                if fake.arms[59].stop_count:
+                    break
+                time.sleep(0.01)
+            return original(*args)
+
+        fake.movej_angle = racing_movej_angle
+        arm.move_joints(TARGET, speed=10.0, wait=False)
+        closers[0].join(5.0)
+        self.assertIs(arm.phase, ArmPhase.CLOSED)
+        self.assertTrue(fake.is_stop(59), "the motion that started after the first stop must be stopped too")
+        self.assertEqual(fake.arms[59].stop_count, 2)
+
+    def test_owned_backend_outlives_its_owner_while_shared(self):
+        owner = ZArm.simulated(ZArmConfig(card_id=1), clock=ManualClock())
+        fake = owner.backend
+        fake.arms[2] = type(fake.arms[1])(2)
+        closed = []
+        fake.close = lambda: closed.append(True)
+        other = ZArm(fake, ZArmConfig(card_id=2))
+        owner.connect()
+        other.connect()
+        owner.close()
+        self.assertEqual(closed, [], "the other arm still uses the backend")
+        other.close()
+        self.assertEqual(closed, [True])
 
     def test_close_stops_before_waiting_for_a_blocked_call(self):
         arm, fake, _ = ready_arm()

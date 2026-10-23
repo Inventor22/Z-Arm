@@ -12,9 +12,9 @@ from __future__ import annotations
 import abc
 import threading
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
-from .errors import OwnershipError
+from .errors import LibraryError, OwnershipError
 
 
 @dataclass(frozen=True)
@@ -50,11 +50,60 @@ class EncoderParam:
 
 
 class Backend(abc.ABC):
-    """Vendor-shaped operations plus single-owner bookkeeping per card id."""
+    """Vendor-shaped operations plus lifetime bookkeeping.
+
+    Every ZArm using a backend holds a client lease from before it starts the
+    server until it closes, and owns at most one card. The vendor server is
+    shared by all clients, so it is only shut down when the last lease goes.
+    """
 
     def __init__(self) -> None:
         self._owners: Dict[int, object] = {}
+        self._clients: List[object] = []
+        self._close_when_unused = False
         self._owners_lock = threading.Lock()
+
+    def acquire_client(self, client: object) -> None:
+        with self._owners_lock:
+            if not any(existing is client for existing in self._clients):
+                self._clients.append(client)
+
+    def release_client(self, client: object, *, stop_server: bool = False) -> bool:
+        """Drop ``client`` and its cards. With ``stop_server``, shut the server down if no client remains.
+
+        Returns True if the server was shut down. The check and the shutdown are
+        atomic with respect to :meth:`acquire_client` and :meth:`claim`.
+        """
+        with self._owners_lock:
+            self._clients = [existing for existing in self._clients if existing is not client]
+            for card in [card for card, owner in self._owners.items() if owner is client]:
+                del self._owners[card]
+            shut_down = False
+            if stop_server and not self._clients:
+                self.close_server()
+                shut_down = True
+            close_now = self._close_when_unused and not self._clients
+        if close_now:
+            self.close_when_unused()
+        return shut_down
+
+    def close_when_unused(self) -> None:
+        """Close now if no client holds a lease, otherwise when the last one is released."""
+        with self._owners_lock:
+            if self._clients:
+                self._close_when_unused = True
+                return
+            self._close_when_unused = False
+        try:
+            self.close()
+        except LibraryError:
+            # A client arrived in the meantime; close when it leaves.
+            with self._owners_lock:
+                self._close_when_unused = True
+
+    def has_clients(self) -> bool:
+        with self._owners_lock:
+            return bool(self._clients)
 
     def claim(self, card: int, owner: object) -> None:
         with self._owners_lock:

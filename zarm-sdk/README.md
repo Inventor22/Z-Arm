@@ -134,10 +134,12 @@ they aren't forced into an enum.
   collision, lost communication, non-finite telemetry, the arm leaving the soft limits or stopping
   short of its target, and Ctrl+C. The same applies to `initialize()`, `start_homing()`, `pause()`
   and `resume()`. `stop()` can be called from another thread while a move is waiting.
-* **Closing.** `close()` always sends a stop first, before it waits for a command in progress (one
-  might be stuck behind a vendor message box), then releases the arm. Interpreter exit stops every
-  open arm. `close(stop_server=True)` leaves the shared vendor server running while another arm is
-  still owned.
+* **Closing.** `close()` sends a stop at once, without waiting for a command in progress (one might
+  be stuck behind a vendor message box). It sends a second stop once in-progress commands finish,
+  so a command that slipped in between is stopped too, then releases the arm. Interpreter exit
+  stops every open arm. Several `ZArm`s can share one backend and its vendor server: each holds a
+  lease, `close(stop_server=True)` shuts the server down only when the last lease goes (atomically),
+  and a backend created by `ZArm.native()` closes when its last user does.
 * **Checked before sending.** Rejected locally, before anything reaches the arm:
   * non-finite numbers, and values that don't fit the C types (ctypes would silently turn `2**32`
     into 0 or `1e300` into infinity);

@@ -1,0 +1,8 @@
+# Hitbot's binaries have no published license; keep local copies out of the repository.
+vendor/
+*.dll
+*.exe
+SDK_LOG/
+*.egg-info/
+build/
+dist/

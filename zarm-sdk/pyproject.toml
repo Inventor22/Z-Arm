@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zarm-sdk"
+version = "0.1.0"
+description = "Typed Python SDK for the Hitbot Z-Arm, layered over Hitbot's native library"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "GPL-3.0" }
+dependencies = []
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: Microsoft :: Windows",
+    "Topic :: Scientific/Engineering :: Robotics",
+]
+
+[tool.setuptools]
+packages = ["zarm"]

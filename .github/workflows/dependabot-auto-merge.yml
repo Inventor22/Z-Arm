@@ -35,11 +35,25 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          TITLE: ${{ github.event.pull_request.title }}
           UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
           DEPS: ${{ steps.meta.outputs.updated-dependencies-json }}
           SELF: dependabot-auto-merge
         run: |
           set -euo pipefail
+
+          # fetch-metadata reads versions only from "Bumps X from A to B." lines, but Dependabot's NuGet updater
+          # writes "Updated X from A to B.", so fall back to the title for single-dependency PRs.
+          re='[Bb]ump ([^ ]+) from ([^ ]+) to ([^ ]+)'
+          if [ -z "$UPDATE_TYPE" ] && [ "$(jq length <<< "$DEPS")" = 1 ] && [[ $TITLE =~ $re ]]; then
+            from=${BASH_REMATCH[2]} to=${BASH_REMATCH[3]}
+            IFS=. read -r f1 f2 _ <<< "${from#v}"
+            IFS=. read -r t1 t2 _ <<< "${to#v}"
+            if [ "$f1" != "$t1" ]; then UPDATE_TYPE=version-update:semver-major
+            elif [ "$f2" != "$t2" ]; then UPDATE_TYPE=version-update:semver-minor
+            else UPDATE_TYPE=version-update:semver-patch; fi
+            DEPS=$(jq --arg prev "$from" '.[0].prevVersion |= (if . == null or . == "" then $prev else . end)' <<< "$DEPS")
+          fi
 
           case "$UPDATE_TYPE" in
             version-update:semver-patch|version-update:semver-minor) ;;
@@ -109,6 +123,12 @@ jobs:
               exit 0
             fi
             sleep $((attempt * 15))
+            # Another update merging first can make this one conflict; Dependabot then rebases it, re-running this check.
+            case "$(gh pr view "$PR" --repo "$REPO" --json state,mergeable --jq '.state + " " + .mergeable')" in
+              MERGED*) echo "::notice::Already merged."; exit 0 ;;
+              CLOSED*) echo "::notice::Pull request was closed; nothing to merge."; exit 0 ;;
+              *CONFLICTING) echo "::notice::Not merged yet: another update merged first and this one now conflicts. Dependabot rebases it automatically, which re-runs this check."; exit 0 ;;
+            esac
           done
           echo "::error::Merge failed after 3 attempts."
           exit 1

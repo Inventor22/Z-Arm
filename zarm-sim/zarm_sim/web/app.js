@@ -1,5 +1,6 @@
 // The simulator desk: polls the server's status about 30 times a second, sends commands with the page's token, and
 // hands the arm's state to the 3D monitor (view.js), loaded only when three.js and WebGL are both available.
+// Dragging a ring or the Z handle in the monitor stages a plan; nothing moves until the plan bar's Move sends it.
 const CONFIG = JSON.parse(document.getElementById("zarm-config").textContent);
 const $ = (id) => document.getElementById(id);
 const MINUS = "\u2212";
@@ -9,7 +10,10 @@ const JOINTS = [
   {n: 3, field: "j3_mm", name: "Vertical", unit: " mm"},
   {n: 4, field: "j4_deg", name: "Wrist R", unit: "\u00b0"},
 ];
+const JOINT = Object.fromEntries(JOINTS.map((joint) => [joint.field, joint]));
 const FRESH_MS = 1000;
+const PLAN_MIN = {j1_deg: 0.25, j2_deg: 0.25, j3_mm: 0.5, j4_deg: 0.25};  // a joint this close to the arm isn't planned
+const HANDOVER_MS = 1500;  // a sent plan gives way to the move's goal when the status shows it, or after this long
 
 let status = null;
 let view = null;
@@ -23,6 +27,14 @@ let jogInFlight = false;
 let polling = false;
 let pollSoon = false;
 let pollTimer = null;
+// Planning in the 3D view.
+let plan = null;  // staged targets by SDK field (deg, or mm for J3); a joint left out follows the arm
+let preview = null;  // the drag under way, from the 3D view
+let planCheck = {clear: true, reason: null};
+let planSending = false;
+let planSentAt = 0;
+let rendering = false;
+let renderAgain = false;
 
 function fmt(value, digits = 2) {
   if (!Number.isFinite(value)) return "\u2013";
@@ -36,6 +48,10 @@ function el(tag, className, text) {
   if (text !== undefined) node.textContent = text;
   return node;
 }
+
+const isLive = () => Boolean(status) && performance.now() - lastHeard < FRESH_MS;
+const armBusy = () => Boolean(status && (status.busy || status.moving || status.queued));
+const listOf = (names) => (names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0]);
 
 // ---- Commands ----
 
@@ -152,6 +168,183 @@ function fillPose() {
   for (const [key, id] of POSE_INPUTS) $(id).value = status.pose[key].toFixed(2);
 }
 
+// ---- Planning: drag a ring or the Z handle in the 3D view to stage a pose; nothing moves until Move ----
+
+const stagedFields = (p) => (p ? JOINTS.map((joint) => joint.field).filter((field) => Number.isFinite(p[field])) : []);
+
+// The plan with one joint staged at `value`, or taken out when that's null or where the arm already is.
+function withJoint(base, field, value) {
+  const next = {...(base || {})};
+  const arm = status?.joints?.[field];
+  next[field] = value === null || (Number.isFinite(arm) && Math.abs(value - arm) < PLAN_MIN[field]) ? null : value;
+  return stagedFields(next).length ? next : null;
+}
+
+function dragAllowed() {
+  return Boolean(view && isLive() && status.ready && !armBusy() && !planSending && !planSentAt);
+}
+
+function canMove() {
+  return Boolean(plan && planCheck.clear && dragAllowed() && !view.isDragging());
+}
+
+// Why Move can't send the plan right now, for a refused press.
+function whyNotMove() {
+  if (!planCheck.clear) return `Not moving: ${planCheck.reason}. Change the plan, or Clear it.`;
+  if (!isLive()) return "Not moving: there's no live status from the simulator.";
+  if (status.phase === "connected") return "Not moving: the arm needs Initialize first.";
+  if (armBusy() || planSentAt) return "Not moving: wait for the arm to settle, or press STOP.";
+  return "Not moving: finish the drag first.";
+}
+
+function clearPlan(text) {
+  if (view) view.cancelDrag();
+  plan = null;
+  planSentAt = 0;
+  if (text) say(text, "ok");
+  render();
+}
+
+// Sends the whole plan as one joint move, with the joints left out where the arm is now. The plan stays on screen
+// until the status shows it as the move's goal.
+async function movePlan() {
+  if (!plan || planSending) return;
+  if (!canMove()) {
+    refuse($("planMove"));
+    say(whyNotMove());
+    return;
+  }
+  const target = {...status.joints};
+  for (const field of stagedFields(plan)) target[field] = plan[field];
+  planSending = true;
+  render();
+  try {
+    const reply = await post("/api/move_joints", {...target, speed: detent("speed")});
+    if (reply.ok) planSentAt = performance.now();
+    else refuse($("planMove"));
+  } finally {
+    planSending = false;
+    render();
+  }
+}
+
+// The 3D view's callbacks.
+function onPreview(p) {
+  preview = p;
+  showTag(p && {...p, kind: "drag"});
+  render();
+}
+
+function onHover(p) {
+  if (!preview) showTag(p && {...p, kind: "hover"});
+}
+
+function onRelease(d) {
+  preview = null;
+  showTag(null);
+  if (d.cancelled) {
+    say("Drag cancelled. The plan is unchanged.", "ok");
+  } else if (d.changed) {
+    plan = withJoint(plan, d.field, d.to);
+    const joint = JOINT[d.field];
+    const count = stagedFields(plan).length;
+    say(plan && Number.isFinite(plan[d.field])
+      ? `J${joint.n} planned at ${fmt(d.to, 1)}${joint.unit}${count > 1 ? ` (${count} joints planned)` : ""}. `
+        + "Press Move to go there, or Clear."
+      : `J${joint.n} is back where the arm is, so it's out of the plan.`, "ok");
+  }
+  render();
+}
+
+// The readout beside the pointer: a handle's name before it's grabbed, then where the drag takes the joint.
+function showTag(p) {
+  const tag = $("dragTag");
+  if (!p) {
+    tag.hidden = true;
+    return;
+  }
+  const joint = JOINT[p.field];
+  tag.hidden = false;
+  if (p.kind === "hover") {
+    const now = status?.joints?.[p.field];
+    tag.dataset.tone = "hover";
+    tag.replaceChildren(`J${joint.n} ${joint.name.toLowerCase()}${joint.n === 3 ? " (Z)" : ""}  `,
+      el("span", "now", `${fmt(now)}${joint.unit}`),
+      el("span", "how", joint.n === 3 ? "Drag up or down to plan a move" : "Drag around the ring to plan a move"));
+  } else {
+    const blocked = !p.clear || p.limited;
+    const how = !p.clear ? `Blocked: ${p.reason}`
+      : p.limited ? `Stops at the soft limit, ${fmt(p.to, 1)}${joint.unit}` : "Release to plan \u00b7 Esc cancels";
+    tag.dataset.tone = blocked ? "blocked" : "ok";
+    tag.replaceChildren(`J${joint.n}  ${fmt(p.from, 1)}${joint.unit} `, el("span", "to", `\u2192 ${fmt(p.to, 1)}${joint.unit}`),
+      el("span", "how", how));
+  }
+  placeTag(tag, p);
+}
+
+// Sets the readout outward from the handle's centre (cx, cy), past the pointer (x, y), on the pointer's side, and
+// keeps it on screen.
+function placeTag(tag, p) {
+  const rect = $("screen").getBoundingClientRect();
+  const width = tag.offsetWidth;
+  const height = tag.offsetHeight;
+  let dx = p.x - p.cx;
+  let dy = p.y - p.cy;
+  const reach = Math.hypot(dx, dy) || 1;
+  dx /= reach;
+  dy /= reach;
+  const x = p.x - rect.left + dx * 34;
+  const y = p.y - rect.top + dy * 34;
+  let side = dx < 0 ? "left" : "right";
+  if (side === "right" && x + width > rect.width - 8) side = "left";
+  else if (side === "left" && x - width < 8) side = "right";
+  const left = Math.min(rect.width - 8 - width, Math.max(8, side === "right" ? x : x - width));
+  const top = Math.min(rect.height - 8 - height, Math.max(8, y - height / 2));
+  tag.style.left = `${left}px`;
+  tag.style.top = `${top}px`;
+}
+
+// The plan bar: each staged joint (removable), what Move will do, and the Clear and Move keys.
+let planChipsKey = "";
+function renderPlan(live) {
+  const fields = stagedFields(plan);
+  $("plan").hidden = !fields.length;
+  $("screenHelp").hidden = fields.length > 0;  // the plan bar takes its place
+  if (!fields.length) {
+    planChipsKey = "";
+    return;
+  }
+  const now = (field) => (live && Number.isFinite(status.joints?.[field]) ? fmt(status.joints[field], 1) : "?");
+  const chipsKey = fields.map((field) => `${field}:${plan[field]}:${now(field)}`).join("|");
+  if (chipsKey !== planChipsKey) {
+    planChipsKey = chipsKey;
+    $("planJoints").replaceChildren(...fields.map((field) => {
+      const joint = JOINT[field];
+      const chip = el("li", "plan-chip");
+      chip.dataset.joint = String(joint.n);
+      const remove = el("button", "key unstage", "\u00d7");
+      remove.type = "button";
+      remove.dataset.field = field;
+      remove.setAttribute("aria-label", `Take J${joint.n} out of the plan`);
+      const reading = el("span", "reading");
+      reading.append(el("span", "from", `${now(field)} `), `\u2192 ${fmt(plan[field], 1)}${joint.unit}`);
+      chip.append(el("span", "tag", `J${joint.n}`), reading, remove);
+      return chip;
+    }));
+  }
+  const speed = detent("speed");
+  const pace = fields.every((field) => field === "j3_mm") ? `${speed} mm/s`
+    : fields.includes("j3_mm") ? `${speed}\u00b0/s (J3 ${speed} mm/s)` : `${speed}\u00b0/s`;
+  const names = listOf(fields.map((field) => `J${JOINT[field].n}`));
+  $("planNote").textContent = planSending ? "Sending the plan\u2026" : planSentAt ? "Moving to the plan\u2026"
+    : !planCheck.clear ? `Blocked: ${planCheck.reason}.`
+    : `Moves ${names}${fields.length > 1 ? " together" : ""} at ${pace}, the joint speed.`;
+  $("plan").classList.toggle("blocked", !planCheck.clear);
+  $("planMove").disabled = planSending;
+  $("planMove").setAttribute("aria-disabled", String(!canMove()));
+  $("planClear").disabled = planSending || Boolean(planSentAt);
+}
+
 // ---- Building the desk ----
 
 function buildDetents(fieldset, name, values, unit, initial) {
@@ -234,7 +427,14 @@ function stateOf(s, live) {
     const line = s.goal?.label ?? "Moving.";
     return {tone: "moving", word: "MOVING", line: s.queued ? `${line} \u00b7 next step queued` : line};
   }
-  return {tone: "ready", word: "READY", line: "Idle. Jog a joint or send a move."};
+  // With a pose staged, the sentence follows the plan.
+  const fields = stagedFields(plan);
+  if (fields.length && !planSentAt && !planSending) {
+    const names = listOf(fields.map((field) => `J${JOINT[field].n}`));
+    if (!planCheck.clear) return {tone: "ready", word: "READY", line: `The plan is blocked: ${planCheck.reason}. Change it, or Clear.`};
+    return {tone: "ready", word: "READY", line: `${names} planned. Press Move to send ${fields.length > 1 ? "them" : "it"}, or Clear.`};
+  }
+  return {tone: "ready", word: "READY", line: "Idle. Jog a joint, drag a ring in the 3D view, or send a move."};
 }
 
 function renderMessage() {
@@ -272,13 +472,79 @@ function placeOnMeter(node, channel, value) {
   node.style.left = `${fraction * 100}%`;
 }
 
+// The joint rows: where each joint is, and where a drag, the plan or the move under way takes it.
+function renderChannels(live, ready, goalJoints) {
+  for (const channel of channels.values()) {
+    const {field, unit} = channel.joint;
+    const value = status?.joints?.[field];
+    channel.value.textContent = Number.isFinite(value) ? `${fmt(value)}${unit}` : "\u2013";
+    const pv = preview && preview.field === field ? preview : null;
+    const planned = plan && Number.isFinite(plan[field]) ? plan[field] : null;
+    const aim = pv ? pv.to : planned;
+    const goal = goalJoints?.[field];
+    const travelling = Number.isFinite(goal) && Number.isFinite(value) && Math.abs(goal - value) > 0.005;
+    let text = "\u00a0";
+    let kind = "quiet";
+    let mark = null;
+    if (aim !== null) {
+      // A drag in progress is amber, like a held key; a staged plan is grey with a dashed frame; red when blocked.
+      const blocked = pv ? !pv.clear || pv.limited : !planCheck.clear;
+      text = pv ? `\u2192 ${fmt(aim, 1)}${unit}${pv.limited ? " at limit" : ""}` : `plan \u2192 ${fmt(aim, 1)}${unit}`;
+      kind = [pv ? "" : "planned", blocked ? "blocked" : ""].join(" ").trim();
+      mark = aim;
+    } else if (travelling) {
+      text = `\u2192 ${fmt(goal)}${unit}`;
+      kind = "";
+      mark = goal;
+    }
+    channel.target.className = `target ${kind}`.trim();
+    channel.target.textContent = text;
+    channel.goal.hidden = mark === null;
+    channel.goal.className = `goal ${kind === "quiet" ? "" : kind}`.trim();
+    if (mark !== null) placeOnMeter(channel.goal, channel, mark);
+    channel.cap.hidden = !Number.isFinite(value);
+    if (Number.isFinite(value)) placeOnMeter(channel.cap, channel, value);
+    for (const key of channel.keys) key.disabled = !ready;
+  }
+}
+
 function render() {
-  const live = Boolean(status) && performance.now() - lastHeard < FRESH_MS;
+  if (rendering) {  // a drag callback while rendering: run again once this pass is done
+    renderAgain = true;
+    return;
+  }
+  rendering = true;
+  try {
+    renderOnce();
+  } finally {
+    rendering = false;
+  }
+  if (renderAgain) {
+    renderAgain = false;
+    render();
+  }
+}
+
+function renderOnce() {
+  const live = isLive();
   const lamp = $("linkLamp");
   lamp.className = `lamp ${live ? "live" : failedPolls >= 3 ? "dead" : ""}`;
   $("linkText").textContent = live
     ? `Live \u00b7 ${status.backend}`
     : failedPolls >= 3 ? "No answer from the simulator server" : "Connecting to the simulator\u2026";
+
+  // A sent plan hands over to the move's goal once the status shows it (or after a moment, for a move too short to see).
+  if (planSentAt && (status?.goal?.joints || performance.now() - planSentAt > HANDOVER_MS)) {
+    plan = null;
+    planSentAt = 0;
+  }
+  if (view) {
+    const allowed = dragAllowed();
+    if (!allowed && view.isDragging()) view.cancelDrag();  // the arm can't take a plan now
+    view.setInteractive(allowed);
+    if (status) view.update(status);
+    planCheck = view.setPlan(plan);
+  }
 
   const state = stateOf(status, live);
   $("stateWindow").dataset.tone = state.tone;
@@ -295,21 +561,8 @@ function render() {
   for (const id of ["moveJoints", "movePose", "moveLinear", "changeHand"]) $(id).disabled = !ready || status.busy;
   for (const id of ["jointsFromState", "poseFromState"]) $(id).disabled = !status?.joints;
 
-  const goalJoints = status?.goal?.jogGoal ?? status?.goal?.joints ?? null;
-  for (const channel of channels.values()) {
-    const field = channel.joint.field;
-    const value = status?.joints?.[field];
-    channel.value.textContent = Number.isFinite(value) ? `${fmt(value)}${channel.joint.unit}` : "\u2013";
-    const goal = goalJoints?.[field];
-    const travelling = Number.isFinite(goal) && Number.isFinite(value) && Math.abs(goal - value) > 0.005;
-    channel.target.className = travelling ? "target" : "target quiet";
-    channel.target.textContent = travelling ? `\u2192 ${fmt(goal)}${channel.joint.unit}` : "\u00a0";
-    channel.goal.hidden = !travelling;
-    if (travelling) placeOnMeter(channel.goal, channel, goal);
-    channel.cap.hidden = !Number.isFinite(value);
-    if (Number.isFinite(value)) placeOnMeter(channel.cap, channel, value);
-    for (const key of channel.keys) key.disabled = !ready;
-  }
+  renderChannels(live, ready, status?.goal?.jogGoal ?? status?.goal?.joints ?? null);
+  renderPlan(live);
 
   const pose = status?.pose;
   $("poseX").textContent = fmt(pose?.x_mm);
@@ -333,7 +586,6 @@ function render() {
   }
   if (status?.log) renderLog(status.log);
   renderMessage();
-  if (view && status) view.update(status);
 }
 
 async function poll() {
@@ -371,6 +623,13 @@ function webglAvailable() {
   }
 }
 
+// Shown under the monitor when it draws the URDF's simple shapes because Hitbot's CAD meshes aren't usable here.
+function showCadNote(reason) {
+  $("cadReason").textContent = reason;
+  $("cadCommand").textContent = CONFIG.cadCommand;
+  $("cadNote").hidden = false;
+}
+
 function startMonitor() {
   const note = $("screenNote");
   if (!CONFIG.three) {
@@ -386,6 +645,9 @@ function startMonitor() {
   }
   import("./view.js")
     .then(({createView}) => createView($("screen"), CONFIG, {
+      onPreview,
+      onRelease,
+      onHover,
       onLost() {
         note.hidden = false;
         note.textContent = "The 3D view stopped because the graphics driver reset. Reload the page to bring it back.";
@@ -395,21 +657,12 @@ function startMonitor() {
       view = created;
       note.hidden = true;
       $("viewReset").disabled = false;
-      if (view.hasCad) {
-        const keys = $("modelKeys");
-        keys.hidden = false;
-        view.setCad(true);
-        for (const key of keys.querySelectorAll("button")) {
-          key.addEventListener("click", () => {
-            const cad = key.dataset.mode === "cad";
-            for (const other of keys.querySelectorAll("button")) {
-              other.setAttribute("aria-pressed", String(other === key));
-            }
-            view.setCad(cad);
-          });
-        }
+      if (!view.hasCad) {
+        showCadNote(view.cadError ? `Simple shapes: the CAD meshes didn't load (${view.cadError}).`
+          : CONFIG.meshNote ? `Simple shapes: ${CONFIG.meshNote}.`
+          : "Simple shapes: the CAD meshes haven't been made on this PC.");
       }
-      if (status) view.update(status);
+      render();
     })
     .catch((error) => {
       note.textContent = `The 3D view couldn't start (${error.message}). The readouts and controls still work.`;
@@ -426,24 +679,42 @@ buildJointFields();
 $("leadSteps").textContent = String(CONFIG.maxLeadSteps);
 $("floorZ").textContent = fmt(CONFIG.floorZMm, 0);
 
-function stopArm() {
+function cancelHolds() {
   cancelRepeats();
+  if (view) view.cancelDrag();
+}
+
+function stopArm() {
+  cancelHolds();
+  if (planSentAt) {  // a plan on its way is what's being stopped: plan again from where the arm ends up
+    plan = null;
+    planSentAt = 0;
+  }
   post("/api/stop");
 }
 
 $("stop").addEventListener("click", stopArm);
 $("estop").addEventListener("click", () => {
-  cancelRepeats();
+  cancelHolds();
+  if (planSentAt) {
+    plan = null;
+    planSentAt = 0;
+  }
   post("/api/estop");
 });
 $("initialize").addEventListener("click", () => post("/api/initialize"));
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") {
-    event.preventDefault();
-    stopArm();
-  }
+  if (event.key !== "Escape") return;
+  event.preventDefault();
+  // Esc backs out of a drag in progress, which moves nothing. Otherwise, and whenever the arm is moving, it stops
+  // the arm, like the STOP key.
+  const cancelled = Boolean(view && view.cancelDrag());
+  if (!cancelled || armBusy()) stopArm();
 });
-window.addEventListener("blur", cancelRepeats);  // a key held while the window loses focus never sees its pointerup
+window.addEventListener("blur", cancelHolds);  // a key or drag held while the window loses focus never sees its pointerup
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) cancelHolds();
+});
 $("jointsFromState").addEventListener("click", fillJoints);
 $("poseFromState").addEventListener("click", fillPose);
 $("moveJoints").addEventListener("click", () => {
@@ -460,7 +731,34 @@ $("moveLinear").addEventListener("click", () => {
 });
 $("changeHand").addEventListener("click", () => post("/api/change_hand", {speed: detent("speed")}));
 $("viewReset").addEventListener("click", () => view?.resetView());
-if (CONFIG.meshNote) $("modelCheck").textContent = CONFIG.meshNote;
+$("planJoints").addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-field]");
+  if (!button || planSending || planSentAt) return;
+  const field = button.dataset.field;
+  plan = withJoint(plan, field, null);
+  say(`J${JOINT[field].n} taken out of the plan.`, "ok");
+  render();
+});
+$("planClear").addEventListener("click", () => clearPlan("Plan cleared. The arm didn't move."));
+$("planMove").addEventListener("click", movePlan);
+$("cadCopy").addEventListener("click", async () => {
+  const key = $("cadCopy");
+  try {
+    await navigator.clipboard.writeText(CONFIG.cadCommand);
+    key.textContent = "Copied";
+  } catch {
+    const range = document.createRange();
+    range.selectNodeContents($("cadCommand"));
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    key.textContent = "Selected: Ctrl+C";
+  }
+  setTimeout(() => { key.textContent = "Copy"; }, 2000);
+});
+
+// For automated checks (and the console): the page's state and the 3D view.
+window.zarmPanel = {view: () => view, plan: () => plan, preview: () => preview, status: () => status, planCheck: () => planCheck};
 
 render();
 poll();

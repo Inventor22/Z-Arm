@@ -202,18 +202,6 @@ button, input, select { font: inherit; color: inherit; }
 .bank { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .bank h2 { font-size: 14px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; margin-right: auto; }
 .bank-keys { display: flex; gap: 8px; }
-.mode-keys { display: flex; }
-.mode-keys .key { border-radius: 0; }
-.mode-keys .key:first-child { border-radius: 4px 0 0 4px; }
-.mode-keys .key:last-child { border-radius: 0 4px 4px 0; border-left-width: 0; }
-.mode-keys .key[aria-pressed="false"] { color: var(--ink-2); }
-.mode-keys .key[aria-pressed="true"] {
-  background: var(--well);
-  border-bottom-width: 1px;
-  transform: translateY(1px);
-  box-shadow: inset 0 2px 4px rgb(0 0 0 / 0.65);
-  cursor: default;
-}
 .detent-banks { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
 .bank-note { font-size: 13px; color: var(--ink-2); }
 .bank-note.bad { color: var(--alarm); }
@@ -261,12 +249,21 @@ button, input, select { font: inherit; color: inherit; }
   font-size: 14px;
   text-wrap: balance;
 }
-.screen-tag {
+/* Along the bottom of the screen, stacked: the blind-zone warning, then the plan bar or the help line. */
+.screen-foot {
   position: absolute;
-  left: 12px;
-  right: 12px;
-  bottom: 40px;
-  z-index: 2;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  pointer-events: none;
+}
+.screen-foot > * { pointer-events: auto; }
+.screen-tag {
   max-width: 560px;
   padding: 6px 9px;
   border-radius: 3px;
@@ -275,11 +272,7 @@ button, input, select { font: inherit; color: inherit; }
 }
 .screen-tag.blocked { color: var(--alarm); box-shadow: 0 0 0 1px #5a2019; }
 .screen-help {
-  position: absolute;
-  left: 12px;
-  bottom: 10px;
-  z-index: 1;
-  max-width: calc(100% - 24px);
+  max-width: 100%;
   padding: 3px 7px;
   border-radius: 3px;
   background: rgb(14 15 16 / 0.82);
@@ -287,6 +280,101 @@ button, input, select { font: inherit; color: inherit; }
   font-size: 12px;
   pointer-events: none;
 }
+
+/* The readout beside the pointer: a handle's name before it's grabbed, then where the drag takes its joint. */
+.drag-tag {
+  position: absolute;
+  z-index: 4;
+  padding: 6px 9px;
+  background: rgb(14 15 16 / 0.94);
+  border: 1px solid var(--amber);
+  border-radius: 3px;
+  box-shadow: 0 4px 10px rgb(0 0 0 / 0.45);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.35;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.drag-tag .to { color: var(--amber); font-weight: 650; }
+.drag-tag .now { font-weight: 650; }
+.drag-tag .how { display: block; color: var(--ink-2); font-size: 11px; }
+.drag-tag[data-tone="hover"] { border-color: var(--cap-rim); }
+.drag-tag[data-tone="blocked"] { border-color: var(--alarm); }
+.drag-tag[data-tone="blocked"] :is(.to, .how) { color: var(--alarm); }
+
+/* The plan bar: the staged pose, docked along the bottom of the screen until it's sent or cleared. The chips and
+   note wrap in the middle; Clear and Move stay together at the right. */
+.plan {
+  align-self: stretch;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 10px;
+  background: rgb(24 25 27 / 0.95);
+  border: 1px solid var(--seam);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.45);
+}
+.plan-title { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); }
+.plan-body { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; min-width: 0; }
+.plan-joints { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.plan-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 3px;
+  background: var(--well);
+  border: 1px solid var(--seam);
+  border-radius: 3px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.plan-chip .tag { padding: 1px 5px; border-radius: 2px; color: var(--marker); font-size: 11px; font-weight: 700; letter-spacing: 0.04em; }
+.plan-chip[data-joint="1"] .tag { background: var(--tape-1); }
+.plan-chip[data-joint="2"] .tag { background: var(--tape-2); }
+.plan-chip[data-joint="3"] .tag { background: var(--tape-3); }
+.plan-chip[data-joint="4"] .tag { background: var(--tape-4); }
+.plan-chip .from { color: var(--ink-2); }
+/* The x that takes a joint out of the plan is a small key cap like any other. */
+.plan-chip .unstage { min-height: 22px; width: 24px; padding: 0; border-radius: 3px; color: var(--ink-2); font-size: 15px; line-height: 1; }
+.plan-chip .unstage:hover:not(:disabled) { color: var(--ink); }
+.plan-note { flex: 1 1 180px; color: var(--ink-2); font-size: 12px; }
+.plan.blocked { border-color: #5a2019; }
+.plan.blocked .plan-note { color: var(--alarm); font-weight: 600; }
+.plan-keys { display: flex; align-items: center; gap: 8px; }
+/* Move: its amber lamp says a plan is ready to go. When it can't go, it stays pressable but unlit, and a press is
+   refused with the reason on the message line. */
+.plan-move {
+  gap: 8px;
+  min-width: 104px;
+  min-height: 40px;
+  color: var(--amber);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-color: #8a6420;
+}
+.plan-move .lamp { background: var(--amber); box-shadow: 0 0 6px rgb(242 170 60 / 0.7); }
+.plan-move[aria-disabled="true"] { color: var(--ink-2); border-color: var(--cap-rim); }
+.plan-move[aria-disabled="true"] .lamp { background: var(--ink-3); box-shadow: none; }
+.plan-move.refused { color: var(--alarm); }
+.plan-move.refused .lamp { background: var(--alarm); box-shadow: none; }
+
+/* Under the monitor when it draws the simple shapes: why, and the command that fetches Hitbot's CAD. */
+.cad-note { font-size: 12px; color: var(--ink-2); line-height: 1.6; }
+.cad-note code {
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--well);
+  color: var(--ink);
+  font: 12px/1.4 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.cad-note .key.small { min-height: 24px; padding: 0 8px; vertical-align: baseline; }
 
 /* ---- Detents: latching keys for step and speed ---- */
 .detents { display: flex; align-items: center; gap: 4px; padding: 0; border: 0; min-width: 0; flex-wrap: wrap; }
@@ -363,12 +451,17 @@ button, input, select { font: inherit; color: inherit; }
 .readout .value { font-size: 20px; font-weight: 650; letter-spacing: -0.01em; }
 .readout .target { min-height: 21px; font-size: 15px; font-weight: 650; color: var(--amber); }
 .readout .target.quiet { color: var(--ink-3); font-size: 12px; font-weight: 400; }
+/* Staged but not sent: grey, with a dashed frame on the meter. A drag in progress stays amber; blocked is red. */
+.readout .target.planned { color: var(--ink-2); }
+.readout .target.blocked { color: var(--alarm); }
 
 .meter { grid-area: meter; position: relative; height: 18px; margin: 0 4px; }
 .meter .slot { position: absolute; left: 0; right: 0; top: 6px; height: 6px; border-radius: 3px; background: var(--well); }
 .meter .zero { position: absolute; top: 2px; width: 1px; height: 14px; background: var(--seam); }
 .meter .cap { position: absolute; top: 1px; width: 8px; height: 16px; margin-left: -4px; border-radius: 2px; background: #f6f3ec; }
 .meter .goal { position: absolute; top: 0; width: 12px; height: 18px; margin-left: -6px; border: 2px solid var(--amber); border-radius: 3px; }
+.meter .goal.planned { border-style: dashed; border-color: var(--ink-2); }
+.meter .goal.blocked { border-color: var(--alarm); }
 
 /* ---- Pose ---- */
 .pose-windows { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
@@ -466,6 +559,10 @@ input[type="number"]:hover, select:hover { border-color: var(--cap-rim); }
   .channel { grid-template-columns: 84px 46px minmax(0, 1fr) 46px; }
   .fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .pose-windows { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  /* The plan bar: Clear and Move on a row of their own, so the note keeps the width. */
+  .plan { grid-template-columns: auto minmax(0, 1fr); }
+  .plan-note { flex-basis: 100%; }
+  .plan-keys { grid-column: 1 / -1; justify-content: flex-end; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }

@@ -85,10 +85,13 @@ export function rpyQuaternion(THREE, [roll, pitch, yaw]) {
   return new THREE.Quaternion().setFromEuler(new THREE.Euler(roll, pitch, yaw, "ZYX"));
 }
 
-// materialFor(visual, linkName) returns the material for one visual.
+// materialFor(visual, linkName) returns the material for one visual. Returns the link groups, each link's meshes,
+// and for each joint its frame (fixed to the parent link at the joint's origin; it doesn't turn with the joint) and
+// its mover (which does).
 export function buildRobot(THREE, urdf, materialFor) {
   const groups = new Map();
   const meshes = new Map();
+  const frames = new Map();
   const movers = new Map();
   const makeGroup = (name) => {
     const group = new THREE.Group();
@@ -119,6 +122,7 @@ export function buildRobot(THREE, urdf, materialFor) {
       frame.add(mover);
       mover.add(makeGroup(joint.child));
       groups.get(parent).add(frame);
+      frames.set(joint.name, frame);
       movers.set(joint.name, {joint, mover, axis: new THREE.Vector3(...joint.axis).normalize()});
       pending.push(joint.child);
     }
@@ -134,5 +138,5 @@ export function buildRobot(THREE, urdf, materialFor) {
     }
     root.updateMatrixWorld(true);
   };
-  return {root, groups, meshes, movers, setJoints};
+  return {root, groups, meshes, frames, movers, setJoints};
 }

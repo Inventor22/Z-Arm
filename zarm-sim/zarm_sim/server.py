@@ -47,7 +47,7 @@ from typing import Any, Callable, Deque, Dict, List, Mapping, Optional, Tuple
 
 from .generate import MJCF_NAME, MODELS_DIR, URDF_NAME, stale_files
 from .kinematics import UrdfRobot, xyz_yaw
-from .meshes import MESH_LINKS, MESH_URL, load_meshes
+from .meshes import MESH_URL, fetch_command, load_meshes
 from .model import RobotModel, build_model, sdk_to_model
 from .sdk import import_zarm, require_simulated
 from .three_js import THREE_URL, THREE_VERSION, load_three
@@ -69,7 +69,7 @@ DEFAULT_PORT = 8770  # umbratek-code's jog panel uses 8765
 ARM_LENGTHS_MM = (220.0, 200.0)  # Z-Arm 2442; passed explicitly so it holds whatever the SDK's default
 WEB_DIR = Path(__file__).resolve().parent / "web"
 PAGE = WEB_DIR / "index.html"
-STATIC_FILES = {"app.js", "view.js", "urdf.js", "style.css"}
+STATIC_FILES = {"app.js", "view.js", "urdf.js", "plan.js", "style.css"}
 STATIC_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8"}
 SDK_FIELDS = ("j1_deg", "j2_deg", "j3_mm", "j4_deg")
 JOINT_STEPS = (0.1, 0.5, 1.0, 5.0, 10.0)  # deg per click for J1, J2, J4; mm for J3
@@ -511,6 +511,7 @@ class Simulator:
             "threeMissing": three_missing,
             "meshes": {link: f"{MESH_URL}{link}.stl" for link in meshes} or None,
             "meshNote": mesh_note,
+            "cadCommand": fetch_command(),
             "jointMap": [
                 {"field": joint.sdk_field, "joint": joint.name, "scale": joint.sdk_scale,
                  "label": f"J{SDK_FIELDS.index(joint.sdk_field) + 1}", "unit": "mm" if joint.kind == "prismatic" else "deg"}
@@ -529,6 +530,14 @@ class Simulator:
             "pollMs": POLL_MS,
             "pageSilentS": self.page_silent_s,
             "envelope": "/api/envelope.json",
+            # For the page's plan checks: the column and the J2 arm in plan view, as workspace.py checks them (mm).
+            "blindZone": {
+                "columnRectMm": list(self.workspace.column_rect_mm),
+                "j2CirclesMm": [list(circle) for circle in self.workspace.j2_circles_mm],
+                "j2BoxMm": list(self.workspace.j2_box_mm),
+                "l1Mm": self.workspace.l1_mm,
+                "l2Mm": self.workspace.l2_mm,
+            },
         }
 
     def envelope(self) -> Dict[str, Any]:
@@ -723,10 +732,12 @@ def main(argv: Optional[List[str]] = None) -> int:
               "works without it; to get it, check this PC can reach the internet and start the server again.",
               file=sys.stderr)
     meshes, mesh_note = load_meshes((MODELS_DIR / URDF_NAME).read_bytes())
-    if mesh_note:
-        print(f"Note: {mesh_note}. The view draws the primitive model.", file=sys.stderr)
-    elif meshes:
-        print("Using the CAD meshes in cache/meshes (made locally from Hitbot's STEP).")
+    if meshes:
+        print("Drawing the arm with Hitbot's CAD meshes, from cache/meshes (made on this PC from its STEP).")
+    else:
+        why = mesh_note or "the CAD meshes haven't been made on this PC"
+        print(f"Note: {why}, so the view draws the arm's simple shapes. For Hitbot's CAD shapes, run this, then "
+              f"restart the server:\n  {fetch_command()}", file=sys.stderr)
     sim = open_simulator()
     try:
         server = make_server(sim, port=args.port, three=three, three_missing=missing, meshes=meshes,

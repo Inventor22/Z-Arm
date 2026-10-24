@@ -1,9 +1,9 @@
 <!doctype html>
 <!--
-THESIS: The umbratek jog desk in rehearsal, cut to the Z-Arm's four channels: the 3D monitor is the subject, every control sits on the desk beside it, and a printed SIMULATED placard rides in the sticky bridge so nobody mistakes this for the arm. Refuses buttons floating over a viewport.
-OWN-WORLD: Matte charcoal desk, well-black monitor and windows, charcoal key caps with a 2px travel edge. Colour is light that reports state: amber moving or queued, green live and ready, red stop, refusal or blind zone. Scribble tapes name J1-J4. One system sans, tabular figures, uppercase printed legends. SIMULATED is a paper placard in marker ink.
-STORY: The owner sees it is a simulation, reads where the arm is, jogs or sends a move, and reads every SDK refusal in plain words.
-FIRST VIEWPORT: Bridge: name and link lamp, placard, state window, Initialize, E-stop, STOP far right. Monitor left at full height; joints and pose right, the moves one scroll further down; message line pinned below.
+THESIS: The umbratek jog desk in rehearsal, cut to the Z-Arm's four channels: the 3D monitor is the subject, every control sits on the desk beside it, and a printed SIMULATED placard rides in the sticky bridge so nobody mistakes this for the arm. Refuses buttons floating over a viewport: the only things over the picture are the joints' own grab handles, a readout while one is dragged, and the plan bar docked along the bottom while a pose is staged.
+OWN-WORLD: Matte charcoal desk, well-black monitor and windows, charcoal key caps with a 2px travel edge. Colour is light that reports state: amber moving, dragged or planned, green live and ready, red stop, refusal, limit or blind zone. Scribble tapes name J1-J4, on their rows and on their handles in the monitor. One system sans, tabular figures, uppercase printed legends. SIMULATED is a paper placard in marker ink.
+STORY: The owner sees it is a simulation, reads where the arm is, drags a joint's ring or the Z handle to plan a pose (or jogs, or types a move), presses Move, and reads every SDK refusal in plain words.
+FIRST VIEWPORT: Bridge: name and link lamp, placard, state window, Initialize, E-stop, STOP far right. Monitor left at full height, the Hitbot CAD arm with its handles; joints and pose right, the typed moves one scroll further down; message line pinned below.
 FORM: inherited world (umbratek-code DESIGN.md); precise brief, no seed.
 -->
 <html lang="en">
@@ -45,22 +45,33 @@ FORM: inherited world (umbratek-code DESIGN.md); precise brief, no seed.
       <dl class="legend">
         <div><dt><span class="swatch reach" aria-hidden="true"></span></dt><dd>Reach, SDK limits</dd></div>
         <div><dt><span class="swatch blind" aria-hidden="true"></span></dt><dd>Blind zone</dd></div>
-        <div><dt><span class="swatch goal" aria-hidden="true"></span></dt><dd>Goal</dd></div>
+        <div><dt><span class="swatch goal" aria-hidden="true"></span></dt><dd>Plan or goal</dd></div>
       </dl>
       <div class="bank-keys">
-        <div class="mode-keys" id="modelKeys" role="group" aria-label="Model drawn" hidden>
-          <button type="button" class="key small" data-mode="cad" aria-pressed="true">CAD</button>
-          <button type="button" class="key small" data-mode="primitives" aria-pressed="false">Primitives</button>
-        </div>
         <button id="viewReset" type="button" class="key small" disabled>Reset view</button>
       </div>
     </div>
     <div id="screen" class="screen">
       <p class="watermark" aria-hidden="true">SIMULATED</p>
       <p id="screenNote" class="screen-note">Starting the 3D view&hellip;</p>
-      <p id="blindTag" class="screen-tag blocked" role="alert" hidden>The J2 arm overlaps the column: Hitbot's blind zone. The SDK doesn't check this; the real arm would hit its column. Jog J2 toward 0&deg;, or J1 away from &plusmn;90&deg;, to clear it.</p>
-      <p class="screen-help">Floor grid: 10 and 100 mm, in the SDK's x and y. Drag to orbit, right-drag to pan, scroll to zoom.</p>
+      <p id="dragTag" class="drag-tag" role="status" hidden></p>
+      <div class="screen-foot">
+        <p id="blindTag" class="screen-tag blocked" role="alert" hidden>The J2 arm overlaps the column: Hitbot's blind zone. The SDK doesn't check this; the real arm would hit its column. Jog J2 toward 0&deg;, or J1 away from &plusmn;90&deg;, to clear it.</p>
+        <div class="plan" id="plan" role="group" aria-label="Plan" hidden>
+          <p class="plan-title">Plan</p>
+          <div class="plan-body">
+            <ul class="plan-joints" id="planJoints" aria-label="Planned joints"></ul>
+            <p class="plan-note" id="planNote" role="status"></p>
+          </div>
+          <div class="plan-keys">
+            <button id="planClear" type="button" class="key">Clear</button>
+            <button id="planMove" type="button" class="key plan-move"><span class="lamp" aria-hidden="true"></span>Move</button>
+          </div>
+        </div>
+        <p id="screenHelp" class="screen-help">Drag a ring or the Z handle to plan a pose, then press Move. Drag elsewhere to orbit, right-drag to pan, scroll to zoom. Grid lines every 10 and 100 mm.</p>
+      </div>
     </div>
+    <p id="cadNote" class="cad-note" hidden><span id="cadReason"></span> For Hitbot's CAD shapes, run <code id="cadCommand"></code> <button id="cadCopy" type="button" class="key small">Copy</button> then restart the server.</p>
   </section>
 
   <div class="column">
@@ -137,7 +148,7 @@ FORM: inherited world (umbratek-code DESIGN.md); precise brief, no seed.
 
 <footer class="message-line">
   <p id="message" aria-live="polite">Messages from the simulator and the SDK appear here.</p>
-  <p class="standing">Esc stops the arm. SDK refusals are shown word for word.</p>
+  <p class="standing">Esc stops the arm, or cancels a drag. SDK refusals are shown word for word.</p>
 </footer>
 </body>
 </html>

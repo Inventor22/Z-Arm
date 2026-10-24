@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from zarm_sim import three_js
-from zarm_sim.meshes import MANIFEST, MESH_LINKS, load_meshes
+from zarm_sim.meshes import FETCH_SCRIPT, MANIFEST, MESH_LINKS, fetch_command, load_meshes
 
 FAKE_FILES = {"build/three.module.js": b"export const REVISION = '186';\n", "LICENSE": b"MIT\n"}
 
@@ -106,6 +106,19 @@ class MeshCacheTests(unittest.TestCase):
             meshes, note = load_meshes(b"<robot/>", Path(folder))
             self.assertEqual(meshes, {})
             self.assertIn("j2_arm.stl", note)
+
+
+class FetchCommandTests(unittest.TestCase):
+    def test_runs_this_checkouts_script_by_its_full_path(self):
+        self.assertTrue(FETCH_SCRIPT.is_absolute())
+        self.assertTrue(FETCH_SCRIPT.is_file())
+        self.assertIn(str(FETCH_SCRIPT), fetch_command())
+        self.assertTrue(fetch_command().startswith("uv run "))
+
+    def test_quotes_a_path_with_spaces(self):
+        script = Path("My Files") / "fetch_cad_meshes.py"
+        self.assertEqual(fetch_command(script), f'uv run "{script}"')
+        self.assertEqual(fetch_command(Path("fetch_cad_meshes.py")), "uv run fetch_cad_meshes.py")
 
 
 if __name__ == "__main__":

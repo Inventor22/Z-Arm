@@ -24,14 +24,17 @@ checked copy only. After that the view works offline. `--port` picks another por
 What's on the page:
 
 * **SIMULATED**, always: a placard in the sticky top bar, a mark on the 3D view, and the page title.
-* **The monitor**: the arm built from `models/zarm_2442.urdf`, posed about 30 times a second from the SDK's state.
-  The floor carries a millimetre grid (10 and 100 mm lines, labelled in the SDK's own x and y), the SDK's +x and +y
-  axes at the J1 axis, the **reach envelope** for the SDK's soft limits (outlined) and Hitbot's **blind zone**
-  (hatched red: positions the joint limits allow only with the J2 arm inside the column). While a move runs, an
-  amber shadow arm and a ring with a drop line show its goal. Coloured rings and a rail name J1 to J4 in the same
-  colours as the joint strips. Drag to orbit, right-drag to pan, scroll to zoom.
+* **The monitor**: the arm, posed about 30 times a second from the SDK's state. It's drawn with Hitbot's CAD
+  meshes once you've made them on this PC ([below](#optional-hitbots-cad-as-the-views-meshes)); until then it draws
+  the model's own shapes from `models/zarm_2442.urdf`, and a note under the view gives the exact command that makes
+  the meshes. The floor carries a millimetre grid (10 and 100 mm lines, labelled in the SDK's own x and y), the
+  SDK's +x and +y axes at the J1 axis, the **reach envelope** for the SDK's soft limits (outlined) and Hitbot's
+  **blind zone** (hatched red: positions the joint limits allow only with the J2 arm inside the column). An amber
+  shadow arm and a ring with a drop line show a planned pose or a running move's goal. Rings on J1, J2 and J4 and a
+  double arrow on the carriage for J3, in the joint strips' colours, are grab handles (below). Drag anywhere else
+  to orbit, right-drag to pan, scroll to zoom.
 * **The bridge**: link lamp, the state window (READY, MOVING, NEEDS INIT, NO LINK), Initialize, E-STOP and STOP.
-  Esc presses STOP from anywhere on the page.
+  Esc presses STOP from anywhere on the page, except during a drag, when it cancels the drag.
 * **Joints**: per-joint jog keys with step and speed detents, the position (J1, J2, J4 in degrees, J3 in mm), the
   goal while moving, and a meter across each joint's soft-limit range.
 * **Pose**: x, y, z, r from the SDK, the tool's yaw (J1 + J2 + r), and a check that the model's forward
@@ -40,6 +43,21 @@ What's on the page:
   through `movej_xyz_lr`), **Move linear**, and **Change hand**.
 * **Messages**: every command's result; the SDK's refusals word for word, such as
   `SoftLimitError: target is outside the soft limits: j1_deg=95 is outside [-90, 90] deg`.
+
+Planning a pose in the 3D view, as in umbratek-code's jog panel: **drag, then Move**.
+
+* Point at a ring or the Z handle: it lights up, the pointer becomes a hand and a tag names the joint. Drag a ring
+  around, or the Z handle up and down the column, to plan that joint (0.5° or 1 mm steps; hold Shift for 5° or
+  10 mm). The shadow arm and the joint's row show the plan as you drag; the arm doesn't move.
+* Plan as many joints as you like, one drag each; the plan bar under the view lists them. **Move** sends them all
+  as one joint move (the joints you didn't plan stay where they are) at the speed detent; **Clear**, or a joint's
+  ×, drops them. The plan clears once the move starts.
+* A drag stops at the SDK's soft limits and says so in red. A plan whose path would run the J2 arm into the column
+  (the blind zone) turns red, shadow included, and Move refuses it. If the simulated arm is already in the blind
+  zone, any plan that doesn't take it further in is allowed, so you can get out.
+* Esc during a drag cancels it. STOP and E-STOP cancel a drag too; they leave a staged plan in place but drop one
+  already sent, since the arm stops short of it. Mouse, touch and pen all work. The handles draw on top of the arm,
+  so they can be grabbed through it.
 
 How it behaves, following umbratek-code's jog panel:
 
@@ -226,9 +244,10 @@ The script downloads `2442-3D-Diagram.zip` into `zarm-sim/cache/cad/`, checks it
 checks the CAD against the model (axes 220 and 200 mm apart, J1 133 mm from the base centre, square to the base),
 splits it into the URDF's links, and writes one binary STL per link to `zarm-sim/cache/meshes/` with a manifest.
 git ignores `cache/`. The CAD is the 593 mm-tall, 210 mm-stroke arm, so the script stretches the column's middle to
-the model's 696 mm; that stretch is an approximation. Restart the server and the view draws the meshes, with a key
-to switch back to the primitives; the URDF, the MJCF and the tests always use the primitives. If the model changes,
-the view ignores the old meshes until you run the script again.
+the model's 696 mm; that stretch is an approximation. Restart the server and the view draws the meshes. Without
+them, as on a fresh clone, or with meshes made for an older model, the view draws the model's own shapes and says
+why, with this checkout's exact command and a Copy key. The URDF, the MJCF and the tests always use those shapes:
+they're the collision geometry.
 
 ## Tests
 
@@ -244,7 +263,8 @@ random joints, the SDK-to-model joint mapping both ways, the MJCF's prefixed, co
 and blind zone against the SDK's inverse kinematics, three.js's checked download and the mesh cache's checks, and the
 HTTP API on an ephemeral port (exact jogs, queueing, SDK refusals, Stop, E-stop and Initialize, the Host and token
 checks, the page-quiet stop, and that only the simulated backend is accepted). The MuJoCo tests run when `mujoco` is
-installed and skip otherwise; the JavaScript syntax check runs when `node` is on the PATH.
+installed and skip otherwise. When `node` is on the PATH, the JavaScript is syntax-checked and the page's blind-zone
+plan checks (`plan.js`) are held to `workspace.py`'s numbers.
 
 ## Files
 
@@ -259,7 +279,7 @@ installed and skip otherwise; the JavaScript syntax check runs when `node` is on
 | `zarm_sim/server.py` | The simulator view's server |
 | `zarm_sim/sdk.py` | Finds zarm-sdk; refuses anything but its simulated backend |
 | `zarm_sim/three_js.py`, `zarm_sim/meshes.py` | three.js's checked download; the optional mesh cache |
-| `zarm_sim/web/` | The page: `index.html`, `style.css`, `app.js` (controls), `view.js` (3D), `urdf.js` |
+| `zarm_sim/web/` | The page: `index.html`, `style.css`, `app.js` (controls, plan), `view.js` (3D, grab handles), `urdf.js`, `plan.js` (blind-zone checks) |
 | `models/` | The generated URDF and MJCF |
 | `scripts/fetch_cad_meshes.py` | Opt-in: meshes from Hitbot's CAD |
 | `tests/` | The tests |
@@ -273,8 +293,9 @@ state, amber for motion, green for ready, red for stop and refusals; tape colour
   setting the duration), limits and refusals follow zarm-sdk's model of the controller, not the controller itself.
 * **Dimensions.** Primitive shapes, with the assumptions above; the CAD meshes are optional and the column stretch
   in them is approximate. Not modelled: cables, the end effector, the connector panel, the column's bowed sides.
-* **The blind zone** is a plan-view check of the J2 arm against the column, in the view only; the SDK doesn't refuse
-  such moves, and a tool hanging below the flange isn't included.
+* **The blind zone** is a plan-view check of the J2 arm against the column, in the view only: Move refuses plans
+  that cross it, but the jog keys, the move forms and the SDK don't check it, and a tool hanging below the flange
+  isn't included.
 * **Jogs** while a step is under way are sent as one move when it ends, so fast clicking moves in short bursts. The
   page-quiet stop also stops moves when a background tab's timers are throttled for over 3 s.
 * **Dynamics** (masses, inertias, MuJoCo gains, limits) are estimates.

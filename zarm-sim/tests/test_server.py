@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import re
 import sys
 import threading
 import time
@@ -124,7 +125,7 @@ class PageAndStatusTests(ServerTestCase):
     def test_static_files_models_and_envelope(self):
         status, _, body = self.client.request("GET", f"/model/{URDF_NAME}")
         self.assertEqual((status, body), (200, (MODELS_DIR / URDF_NAME).read_bytes()))
-        for path in ("/web/app.js", "/web/view.js", "/web/urdf.js", "/web/style.css"):
+        for path in ("/web/app.js", "/web/view.js", "/web/urdf.js", "/web/plan.js", "/web/style.css"):
             self.assertEqual(self.client.request("GET", path)[0], 200, path)
         for path in ("/web/../server.py", "/web/index.html", "/vendor/three/build/three.module.js", "/meshes/j1_arm.stl",
                      "/model/../zarm_sim/server.py"):
@@ -136,6 +137,19 @@ class PageAndStatusTests(ServerTestCase):
 
     def test_never_loads_the_native_backend(self):
         self.assertNotIn("zarm.native", sys.modules)
+
+    def test_page_config_carries_the_plan_checks_and_the_cad_command(self):
+        _, _, body = self.client.request("GET", "/")
+        found = re.search(r'<script type="application/json" id="zarm-config">(.*?)</script>', body.decode("utf-8"), re.S)
+        config = json.loads(found.group(1))
+        ws = self.sim.workspace
+        self.assertEqual(config["blindZone"], {
+            "columnRectMm": list(ws.column_rect_mm), "j2CirclesMm": [list(c) for c in ws.j2_circles_mm],
+            "j2BoxMm": list(ws.j2_box_mm), "l1Mm": 220.0, "l2Mm": 200.0,
+        })
+        self.assertIsNone(config["meshes"])  # no meshes given: the page draws the primitives and says how to get CAD
+        self.assertTrue(config["cadCommand"].startswith("uv run "))
+        self.assertIn("fetch_cad_meshes.py", config["cadCommand"])
 
 
 class MotionTests(ServerTestCase):

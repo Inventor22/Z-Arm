@@ -17,7 +17,8 @@ const COLOR = {
   axisX: 0xff3352, axisY: 0x8bdc00, lit: 0xffffff,
 };
 const TAPES = {j1_shoulder: 0xe3ba4f, j2_elbow: 0x7fb3d9, j3_vertical: 0x92cc8a, j4_wrist: 0xe19769};
-const VIEW = {target: [0.22, 0.0, 0.17], position: [1.3, -1.28, 1.24]};
+const VIEW = {target: [0.22, 0.0, 0.17], position: [1.3, -1.28, 1.24]};  // the home view's direction, before it's fitted
+const FIT = {x: 0.9, y: 0.86};  // how much of the canvas (as a fraction of its half-width and half-height) the arm may fill
 const GRID_MM = {x0: -300, x1: 500, y0: -500, y1: 500};  // in the SDK frame
 const MM = 0.001;
 const LABEL_PX = 20;  // the floor labels' height on screen (their text is about 12 px), whatever the zoom
@@ -83,12 +84,10 @@ export async function createView(host, config, {onPreview = () => {}, onRelease 
   const camera = new THREE.PerspectiveCamera(32, 1, 0.01, 30);
   camera.up.set(0, 0, 1);  // the URDF is Z-up; keep it that way
   const controls = new OrbitControls(camera, renderer.domElement);
-  const resetView = () => {
-    camera.position.set(...VIEW.position);
-    controls.target.set(...VIEW.target);
-    controls.update();
-  };
-  resetView();
+  // Until the arm is built, look along the home direction; then fitView (below) frames it.
+  camera.position.set(...VIEW.position);
+  controls.target.set(...VIEW.target);
+  controls.update();
 
   scene.add(new THREE.HemisphereLight(0xf3efe6, 0x1b1d20, 1.5));
   const key = new THREE.DirectionalLight(0xffffff, 2.3);
@@ -215,8 +214,9 @@ export async function createView(host, config, {onPreview = () => {}, onRelease 
   scene.add(robot.root);
   const part = (link, name) => (robot.meshes.get(link) || []).find((mesh) => mesh.name === name);
 
-  // The J3 rail: where the J1 housing travels, on the column's face just outside the housing's side that faces the
-  // default view. The Z handle rides on it.
+  // The J3 rail: the travel zone, where the J1 housing travels (its underside at the bottom of travel to its top at
+  // J3 = 0), on the column's face just outside the housing's side that faces the default view, with a stop across
+  // each end. The Z handle rides on it.
   const j3 = urdf.joints.find((joint) => joint.name === "j3_vertical");
   const column = part("base_link", "column");
   const housing = part("carriage", "housing");
@@ -225,9 +225,15 @@ export async function createView(host, config, {onPreview = () => {}, onRelease 
   if (j3 && column && housing) {
     const low = j3.xyz[2] + j3.lower + housing.position.z - housing.geometry.parameters.depth / 2;
     const high = j3.xyz[2] + j3.upper + housing.position.z + housing.geometry.parameters.depth / 2;
-    const rail = new THREE.Mesh(new THREE.BoxGeometry(0.002, 0.004, high - low), new THREE.MeshBasicMaterial({color: TAPES.j3_vertical}));
+    const tape = new THREE.MeshBasicMaterial({color: TAPES.j3_vertical});
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(0.002, 0.004, high - low), tape);
     rail.position.set(railX, railY, (low + high) / 2);
     robot.groups.get("base_link").add(rail);
+    for (const [z, inward] of [[low, 1], [high, -1]]) {
+      const stop = new THREE.Mesh(new THREE.BoxGeometry(0.004, 0.016, 0.0025), tape);
+      stop.position.set(railX, railY, z + inward * 0.00125);
+      robot.groups.get("base_link").add(stop);
+    }
   }
 
   // ---- The shadow arm: a planned pose, or the goal of the move under way ----
@@ -710,6 +716,45 @@ export async function createView(host, config, {onPreview = () => {}, onRelease 
   }
 
   // ---- Rendering ----
+  // The home view looks along VIEW's direction from just far enough away to show the whole arm, base plate to column
+  // top, at the canvas's aspect (a tall side panel or a wide desk alike). It refits as the canvas resizes until the
+  // camera is moved; Reset view fits it again.
+  const homeDirection = new THREE.Vector3(...VIEW.position).sub(new THREE.Vector3(...VIEW.target)).normalize();
+  let homed = true;
+  controls.addEventListener("start", () => { homed = false; });
+  function fitView() {
+    robot.root.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(robot.root);
+    if (box.isEmpty()) return;
+    const centre = box.getCenter(new THREE.Vector3());
+    const corners = [];
+    for (const x of [box.min.x, box.max.x]) {
+      for (const y of [box.min.y, box.max.y]) {
+        for (const z of [box.min.z, box.max.z]) corners.push(new THREE.Vector3(x, y, z));
+      }
+    }
+    const fits = (distance) => {
+      camera.position.copy(centre).addScaledVector(homeDirection, distance);
+      camera.lookAt(centre);
+      camera.updateMatrixWorld(true);
+      return corners.every((corner) => {
+        const p = corner.clone().project(camera);
+        return p.z < 1 && Math.abs(p.x) <= FIT.x && Math.abs(p.y) <= FIT.y;
+      });
+    };
+    let near = 0.05;
+    let far = 20;
+    for (let k = 0; k < 40; k += 1) {
+      const middle = (near + far) / 2;
+      if (fits(middle)) far = middle;
+      else near = middle;
+    }
+    fits(far);
+    controls.target.copy(centre);
+    controls.update();
+    homed = true;
+    dirty = true;
+  }
   controls.addEventListener("change", () => { dirty = true; });
   const resize = () => {
     const width = Math.max(1, host.clientWidth);
@@ -718,6 +763,7 @@ export async function createView(host, config, {onPreview = () => {}, onRelease 
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
     sizeLabels(width, height);
+    if (homed) fitView();
     dirty = true;
   };
   new ResizeObserver(resize).observe(host);
@@ -742,8 +788,7 @@ export async function createView(host, config, {onPreview = () => {}, onRelease 
     hasCad: cad,
     cadError,
     resetView() {
-      resetView();
-      dirty = true;
+      fitView();
     },
     // The arm's state from the server: its joints, the move under way, and whether the J2 arm is in the blind zone.
     update(status) {
@@ -799,6 +844,12 @@ export async function createView(host, config, {onPreview = () => {}, onRelease 
       return true;
     },
     isDragging: () => Boolean(drag),
+    // The page position of a point in the robot frame (m), for automated checks of the framing; null behind the camera.
+    screenPoint([x, y, z]) {
+      const rect = canvasRect();
+      const p = toPixel(new THREE.Vector3(x, y, z), rect);
+      return p && {x: rect.left + p.x, y: rect.top + p.y};
+    },
     // Page positions of a handle (used by automated checks): a ring's outermost point on screen, or a point on the
     // Z handle and its two ends; and the handle's centre.
     handlePoint(fieldName) {

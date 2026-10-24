@@ -25,19 +25,19 @@
     <light name="key" pos="0.6 -0.6 1.6" dir="-0.35 0.35 -1" directional="true" />
     <geom name="floor" type="plane" size="1 1 0.05" material="floor_grid" />
     <body name="zarm_base_link" pos="0 0 0" quat="1 0 0 0">
-      <inertial pos="0 0 0.342608516" mass="8.6" fullinertia="0.373447915 0.369610043 0.028332374 0 0 0" />
+      <inertial pos="0 0 0.291136809" mass="8.6" fullinertia="0.276728473 0.272910742 0.028484567 0 0 0" />
       <geom name="zarm_base_plate" type="box" size="0.1 0.1 0.005" pos="0 0 0.005" material="zarm_dark" />
-      <geom name="zarm_column" type="box" size="0.064 0.074 0.3355" pos="0 0 0.3455" material="zarm_column" />
-      <geom name="zarm_column_cap" type="box" size="0.064 0.074 0.0075" pos="0 0 0.6885" material="zarm_trim" />
+      <geom name="zarm_column" type="box" size="0.064 0.074 0.284" pos="0 0 0.294" material="zarm_column" />
+      <geom name="zarm_column_cap" type="box" size="0.064 0.074 0.0075" pos="0 0 0.5855" material="zarm_trim" />
       <geom name="zarm_mount_hole_1" type="cylinder" size="0.007 0.00025" pos="0.08 0.08 0.01025" material="zarm_hole" contype="0" conaffinity="0" group="2" />
       <geom name="zarm_mount_hole_2" type="cylinder" size="0.007 0.00025" pos="-0.08 0.08 0.01025" material="zarm_hole" contype="0" conaffinity="0" group="2" />
       <geom name="zarm_mount_hole_3" type="cylinder" size="0.007 0.00025" pos="-0.08 -0.08 0.01025" material="zarm_hole" contype="0" conaffinity="0" group="2" />
       <geom name="zarm_mount_hole_4" type="cylinder" size="0.007 0.00025" pos="0.08 -0.08 0.01025" material="zarm_hole" contype="0" conaffinity="0" group="2" />
       <body name="zarm_carriage" pos="0 0 0.374" gravcomp="1">
         <joint name="zarm_j3_vertical" type="slide" axis="0 0 1" range="-0.31 0" damping="800" armature="0.5" />
-        <inertial pos="0.116865372 0 0.1649" mass="0.99" fullinertia="0.001032337 0.001123557 0.001521634 0 0 0" />
-        <geom name="zarm_housing" type="box" size="0.0345 0.05 0.031" pos="0.0985 0 0.1649" material="zarm_white" />
-        <geom name="zarm_housing_nose" type="cylinder" size="0.05 0.031" pos="0.133 0 0.1649" material="zarm_white" />
+        <inertial pos="0.116865372 0 0.1654" mass="0.99" fullinertia="0.00102219 0.001113409 0.001521634 0 0 0" />
+        <geom name="zarm_housing" type="box" size="0.0345 0.05 0.0305" pos="0.0985 0 0.1654" material="zarm_white" />
+        <geom name="zarm_housing_nose" type="cylinder" size="0.05 0.0305" pos="0.133 0 0.1654" material="zarm_white" />
         <body name="zarm_j1_arm" pos="0.133 0 0" gravcomp="1">
           <joint name="zarm_j1_shoulder" type="hinge" axis="0 0 1" range="-1.570796327 1.570796327" damping="15" armature="0.01" />
           <inertial pos="0.11 0 0.0954" mass="5.86" fullinertia="0.007498307 0.048374462 0.050668112 0 0 0" />

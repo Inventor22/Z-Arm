@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import struct
 import tempfile
 import unittest
 import urllib.error
@@ -11,7 +12,8 @@ from pathlib import Path
 from unittest import mock
 
 from zarm_sim import three_js
-from zarm_sim.meshes import FETCH_SCRIPT, MANIFEST, MESH_LINKS, fetch_command, load_meshes
+from zarm_sim.meshes import (FETCH_SCRIPT, MANIFEST, MESH_LINKS, fetch_command, load_meshes, stl_triangles,
+                             vertical_hits)
 
 FAKE_FILES = {"build/three.module.js": b"export const REVISION = '186';\n", "LICENSE": b"MIT\n"}
 
@@ -106,6 +108,29 @@ class MeshCacheTests(unittest.TestCase):
             meshes, note = load_meshes(b"<robot/>", Path(folder))
             self.assertEqual(meshes, {})
             self.assertIn("j2_arm.stl", note)
+
+
+class MeshProbeTests(unittest.TestCase):
+    """The helpers that measure the column's slot and the carriage in the meshes."""
+
+    def box_stl(self, x0, x1, y0, y1, z0, z1):
+        corners = [(x, y, z) for x in (x0, x1) for y in (y0, y1) for z in (z0, z1)]
+        faces = [(0, 1, 3), (0, 3, 2), (4, 6, 7), (4, 7, 5), (0, 4, 5), (0, 5, 1), (2, 3, 7), (2, 7, 6),
+                 (0, 2, 6), (0, 6, 4), (1, 5, 7), (1, 7, 3)]
+        data = bytearray(b"test box".ljust(80, b" ")) + struct.pack("<I", len(faces))
+        for a, b, c in faces:
+            data += struct.pack("<12fH", 0.0, 0.0, 0.0, *corners[a], *corners[b], *corners[c], 0)
+        return bytes(data)
+
+    def test_a_vertical_line_meets_a_box_at_its_bottom_and_top(self):
+        triangles = stl_triangles(self.box_stl(0.0, 2.0, -1.0, 1.0, 0.25, 0.75))
+        self.assertEqual(len(triangles), 12)
+        self.assertEqual(vertical_hits(triangles, 0.5, 0.25), [0.25, 0.75])
+        self.assertEqual(vertical_hits(triangles, 3.0, 0.0), [])  # beside it
+
+    def test_a_truncated_stl_is_refused(self):
+        with self.assertRaises(ValueError):
+            stl_triangles(self.box_stl(0, 1, 0, 1, 0, 1)[:-10])
 
 
 class FetchCommandTests(unittest.TestCase):

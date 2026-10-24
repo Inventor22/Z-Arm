@@ -22,9 +22,14 @@ What the script does to the CAD, and checks before trusting it:
   +X toward J1, +Z up). The CAD's arm sits at J1 = J2 = 0, which the axes confirm; J4 is assumed to be at 0.
 * Splits the solids into the URDF's links: the column part's solids at the J1 housing's height go to the carriage,
   the rest to base_link; the J2 part's 84 mm boss on the J4 axis is the flange.
-* Stretches the column to the model's height: the CAD is the 593 mm-tall, 210 mm-stroke arm; the model assumes
-  696 mm for the 310 mm stroke. Heights between 130 and 470 mm are stretched evenly and everything above moves up,
-  so the connector panel and the top stay as drawn. That part is an approximation, not Hitbot's geometry.
+* Measures the Z travel's surroundings down the middle of the column's two front slots: where the slots open (above
+  the electronics bay's bracket), where the cap closes them, the column's top, and the J1 housing's underside and
+  top where it meets the column. It requires them to match zarm_sim/dimensions.py; otherwise it stops.
+* Keeps Hitbot's 593 mm column whenever the model's stroke fits its slots, which hold up to 318.1 mm from the
+  drawing's lowest position: the 310 mm stroke does, so the column is used as drawn. A longer stroke grows the column
+  by exactly the shortfall, stretching the plain middle of the column the J1 housing sweeps over the drawn 240 mm
+  travel; everything above it, the slot's end and the cap, moves up unchanged, and everything below stays as drawn.
+  That stretch approximates a longer column; it isn't Hitbot's geometry.
 """
 
 from __future__ import annotations
@@ -44,7 +49,7 @@ SIM_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SIM_ROOT))
 
 from zarm_sim.generate import MODELS_DIR, URDF_NAME  # noqa: E402
-from zarm_sim.meshes import MANIFEST, MESH_DIR, MESH_LINKS  # noqa: E402
+from zarm_sim.meshes import MANIFEST, MESH_DIR, MESH_LINKS, SLOT_PROBE_MM, column_lift, vertical_hits  # noqa: E402
 from zarm_sim.model import build_model  # noqa: E402
 
 CAD_URL = "https://www.hitbotrobot.com/wp-content/uploads/2021/09/2442-3D-Diagram.zip"
@@ -54,10 +59,9 @@ STEP_SHA256 = "4ca2a31aca98205fdf67f7a3fb3c34005ff4539dc586bf0c9aa7e4ac40f4de29"
 CAD_DIR = SIM_ROOT / "cache" / "cad"
 CAD_ZIP = CAD_DIR / "2442-3D-Diagram.zip"
 CAD_STEP = CAD_DIR / "zarm_2442_v1.0.0.stp"
-STEP_COLUMN_HEIGHT_MM = 593.0  # the CAD's column, measured
-STRETCH_FROM_MM, STRETCH_TO_MM = 130.0, 470.0
 TOLERANCE_MM, ANGULAR_TOLERANCE_RAD = 0.15, 0.25
 CHECK_MM = 0.05
+HEIGHT_CHECK_MM = 0.25  # the travel's surroundings, read off the tessellated surfaces (the slot's plates are rounded)
 
 
 def fail(message: str) -> None:
@@ -221,44 +225,95 @@ def main() -> int:
     for link, joint in (("j1_arm", "j1_shoulder"), ("j2_arm", "j2_elbow"), ("flange", "j4_wrist")):
         x += model.joint(joint).xyz[0] * 1000.0
         frames[link] = (x, 0.0, flange_face)
-    stretch = d.overall_height_mm - STEP_COLUMN_HEIGHT_MM
-    scale = (STRETCH_TO_MM - STRETCH_FROM_MM + stretch) / (STRETCH_TO_MM - STRETCH_FROM_MM)
 
-    def lift(z: float) -> float:
-        if z <= STRETCH_FROM_MM:
-            return z
-        if z <= STRETCH_TO_MM:
-            return STRETCH_FROM_MM + (z - STRETCH_FROM_MM) * scale
-        return z + stretch
+    # Every link's surface as triangles in the robot frame (mm), as the CAD has it.
+    surfaces = {}
+    for link in MESH_LINKS:
+        triangles = []
+        for solid in groups[link]:
+            vertices, faces = solid.tessellate(TOLERANCE_MM, ANGULAR_TOLERANCE_RAD)
+            moved = [to_robot(vertex.X, vertex.Y, vertex.Z) for vertex in vertices]
+            triangles.extend((moved[a], moved[b], moved[c]) for a, b, c in faces)
+        surfaces[link] = triangles
+
+    # The Z travel's surroundings, down the middle of each front slot: where the slot is open (between the bracket
+    # below and the cap above) and the J1 housing's extent where it meets the column.
+    probe_x, probe_y = SLOT_PROBE_MM
+    housing_mid = flange_face + (d.housing_bottom_above_flange_mm + d.housing_top_above_flange_mm) / 2.0
+    measured = {}
+    for side in (probe_y, -probe_y):
+        column_hits = vertical_hits(surfaces["base_link"], probe_x, side)
+        carriage_hits = vertical_hits(surfaces["carriage"], probe_x, side)
+        below = [z for z in column_hits if z < housing_mid]
+        above = [z for z in column_hits if z > housing_mid]
+        if not (below and above and carriage_hits):
+            fail(f"couldn't find the column's slot and the J1 housing at y = {side:g} mm")
+        found = {
+            "where the slots open": (max(below), d.cad_slot_bottom_mm),
+            "where the cap closes them": (min(above), d.cad_slot_top_mm),
+            "the J1 housing's underside above the flange face": (min(carriage_hits) - flange_face,
+                                                                 d.housing_bottom_above_flange_mm),
+            "the J1 housing's top above the flange face": (max(carriage_hits) - flange_face, d.housing_top_above_flange_mm),
+        }
+        for name, (value, expected) in found.items():
+            measured.setdefault(name, []).append(value)
+            if abs(value - expected) > HEIGHT_CHECK_MM:
+                fail(f"{name} is {value:.2f} mm in this CAD, not {expected:g}; it isn't the CAD the model was made from")
+    column_top = max(z for triangle in surfaces["base_link"] for _, _, z in triangle)
+    if abs(column_top - d.cad_column_height_mm) > HEIGHT_CHECK_MM:
+        fail(f"the CAD's column is {column_top:.2f} mm tall, not {d.cad_column_height_mm:g}")
+    if not d.flange_face_at_bottom_mm <= flange_face <= d.flange_face_at_bottom_mm + d.cad_stroke_mm:
+        fail(f"the CAD's arm (flange face at {flange_face:.2f} mm) isn't within its drawn {d.cad_stroke_mm:g} mm travel")
+    for name, values in measured.items():
+        print(f"  {name}: {sum(values) / len(values):.2f} mm")
+    print(f"  the column's top: {column_top:.2f} mm")
+
+    # Fit the column to the model's stroke: Hitbot's column as drawn while the stroke fits its slots (up to 318.1 mm);
+    # beyond that, grow it by exactly the shortfall, stretching only the plain middle the J1 housing sweeps over the
+    # drawn travel. Below that stays as drawn; above it, the slot's end and the cap move up unchanged.
+    added = d.column_growth_mm
+    low, high = d.stretch_zone_mm
+    lift = column_lift(low, high, added)
 
     MESH_DIR.mkdir(parents=True, exist_ok=True)
     links = {}
     for link in MESH_LINKS:
         ox, oy, oz = frames[link]
-        triangles = []
-        for solid in groups[link]:
-            vertices, faces = solid.tessellate(TOLERANCE_MM, ANGULAR_TOLERANCE_RAD)
-            moved = []
-            for vertex in vertices:
-                rx, ry, rz = to_robot(vertex.X, vertex.Y, vertex.Z)
-                if link == "base_link":
-                    rz = lift(rz)
-                moved.append(((rx - ox) / 1000.0, (ry - oy) / 1000.0, (rz - oz) / 1000.0))
-            triangles.extend((moved[a], moved[b], moved[c]) for a, b, c in faces)
+
+        def place(point, ox=ox, oy=oy, oz=oz, column=link == "base_link"):
+            px, py, pz = point
+            return ((px - ox) / 1000.0, (py - oy) / 1000.0, ((lift(pz) if column else pz) - oz) / 1000.0)
+
+        triangles = [(place(a), place(b), place(c)) for a, b, c in surfaces[link]]
         data = binary_stl(triangles, f"Z-Arm 2442 {link}, made locally from Hitbot's STEP; do not redistribute")
         (MESH_DIR / f"{link}.stl").write_bytes(data)
         links[link] = {"file": f"{link}.stl", "sha256": sha256(data), "triangles": len(triangles),
                        "solids": len(groups[link])}
         print(f"  {link}: {len(groups[link])} solids, {len(triangles)} triangles")
+    slot = [round(sum(measured["where the slots open"]) / 2.0, 3),
+            round(sum(measured["where the cap closes them"]) / 2.0, 3)]
+    zone = d.travel_zone_mm()
     manifest = {
         "format": 1,
         "source": {"url": CAD_URL, "zip_sha256": CAD_SHA256, "step_sha256": STEP_SHA256},
         "urdf_sha256": sha256(urdf_bytes),
         "units": "m, in each URDF link's frame",
-        "column_stretch_mm": {"from": STRETCH_FROM_MM, "to": STRETCH_TO_MM, "added": round(stretch, 3)},
+        # Heights in mm above the mounting surface. The CAD's: its open slot, its column, its arm's flange face and the
+        # travel it was drawn with. Then how much the column grew (0: as drawn) and over which part of it, and, in the
+        # model, the slot and the travel zone the J1 housing sweeps over the stroke.
+        "cad_mm": {"slot": slot, "column_top": round(column_top, 3), "flange_face": round(flange_face, 3),
+                   "stroke": d.cad_stroke_mm},
+        "column_growth_mm": {"from": round(low, 3), "to": round(high, 3), "added": round(added, 3)},
+        "stroke_mm": d.z_stroke_mm,
+        "slot_mm": [slot[0], round(slot[1] + added, 3)],
+        "travel_zone_mm": [round(v, 3) for v in zone],
         "links": links,
     }
     (MESH_DIR / MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    below, above = zone[0] - slot[0], slot[1] + added - zone[1]
+    grown = f"grown {added:g} mm" if added else "as drawn"
+    print(f"  the column: {d.overall_height_mm:g} mm tall ({grown}); for the {d.z_stroke_mm:g} mm stroke the J1 housing "
+          f"travels {zone[0]:g}..{zone[1]:g} mm, leaving {below:.1f} mm of slot below and {above:.1f} mm above")
     print(f"Wrote {len(links)} meshes to {MESH_DIR}. Restart the simulator view to use them.")
     return 0
 

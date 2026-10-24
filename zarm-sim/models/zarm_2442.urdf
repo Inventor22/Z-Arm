@@ -27,9 +27,9 @@
   <!-- Base plate and column (fixed) -->
   <link name="base_link">
     <inertial>
-      <origin xyz="0 0 0.342608516" rpy="0 0 0" />
+      <origin xyz="0 0 0.291136809" rpy="0 0 0" />
       <mass value="8.6" />
-      <inertia ixx="0.373447915" ixy="0" ixz="0" iyy="0.369610043" iyz="0" izz="0.028332374" />
+      <inertia ixx="0.276728473" ixy="0" ixz="0" iyy="0.272910742" iyz="0" izz="0.028484567" />
     </inertial>
     <visual name="base_plate">
       <origin xyz="0 0 0.005" rpy="0 0 0" />
@@ -39,14 +39,14 @@
       <material name="zarm_dark" />
     </visual>
     <visual name="column">
-      <origin xyz="0 0 0.3455" rpy="0 0 0" />
+      <origin xyz="0 0 0.294" rpy="0 0 0" />
       <geometry>
-        <box size="0.128 0.148 0.671" />
+        <box size="0.128 0.148 0.568" />
       </geometry>
       <material name="zarm_column" />
     </visual>
     <visual name="column_cap">
-      <origin xyz="0 0 0.6885" rpy="0 0 0" />
+      <origin xyz="0 0 0.5855" rpy="0 0 0" />
       <geometry>
         <box size="0.128 0.148 0.015" />
       </geometry>
@@ -87,13 +87,13 @@
       </geometry>
     </collision>
     <collision name="column">
-      <origin xyz="0 0 0.3455" rpy="0 0 0" />
+      <origin xyz="0 0 0.294" rpy="0 0 0" />
       <geometry>
-        <box size="0.128 0.148 0.671" />
+        <box size="0.128 0.148 0.568" />
       </geometry>
     </collision>
     <collision name="column_cap">
-      <origin xyz="0 0 0.6885" rpy="0 0 0" />
+      <origin xyz="0 0 0.5855" rpy="0 0 0" />
       <geometry>
         <box size="0.128 0.148 0.015" />
       </geometry>
@@ -110,34 +110,34 @@
   <!-- Z carriage with the J1 housing; moves with J3 -->
   <link name="carriage">
     <inertial>
-      <origin xyz="0.116865372 0 0.1649" rpy="0 0 0" />
+      <origin xyz="0.116865372 0 0.1654" rpy="0 0 0" />
       <mass value="0.99" />
-      <inertia ixx="0.001032337" ixy="0" ixz="0" iyy="0.001123557" iyz="0" izz="0.001521634" />
+      <inertia ixx="0.00102219" ixy="0" ixz="0" iyy="0.001113409" iyz="0" izz="0.001521634" />
     </inertial>
     <visual name="housing">
-      <origin xyz="0.0985 0 0.1649" rpy="0 0 0" />
+      <origin xyz="0.0985 0 0.1654" rpy="0 0 0" />
       <geometry>
-        <box size="0.069 0.1 0.062" />
+        <box size="0.069 0.1 0.061" />
       </geometry>
       <material name="zarm_white" />
     </visual>
     <visual name="housing_nose">
-      <origin xyz="0.133 0 0.1649" rpy="0 0 0" />
+      <origin xyz="0.133 0 0.1654" rpy="0 0 0" />
       <geometry>
-        <cylinder radius="0.05" length="0.062" />
+        <cylinder radius="0.05" length="0.061" />
       </geometry>
       <material name="zarm_white" />
     </visual>
     <collision name="housing">
-      <origin xyz="0.0985 0 0.1649" rpy="0 0 0" />
+      <origin xyz="0.0985 0 0.1654" rpy="0 0 0" />
       <geometry>
-        <box size="0.069 0.1 0.062" />
+        <box size="0.069 0.1 0.061" />
       </geometry>
     </collision>
     <collision name="housing_nose">
-      <origin xyz="0.133 0 0.1649" rpy="0 0 0" />
+      <origin xyz="0.133 0 0.1654" rpy="0 0 0" />
       <geometry>
-        <cylinder radius="0.05" length="0.062" />
+        <cylinder radius="0.05" length="0.061" />
       </geometry>
     </collision>
   </link>

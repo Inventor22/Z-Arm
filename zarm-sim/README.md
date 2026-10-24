@@ -31,8 +31,10 @@ What's on the page:
   SDK's +x and +y axes at the J1 axis, the **reach envelope** for the SDK's soft limits (outlined) and Hitbot's
   **blind zone** (hatched red: positions the joint limits allow only with the J2 arm inside the column). An amber
   shadow arm and a ring with a drop line show a planned pose or a running move's goal. Rings on J1, J2 and J4 and a
-  double arrow on the carriage for J3, in the joint strips' colours, are grab handles (below). Drag anywhere else
-  to orbit, right-drag to pan, scroll to zoom.
+  double arrow on the carriage for J3, in the joint strips' colours, are grab handles (below); the double arrow
+  rides a green rail on the column that spans the J1 housing's travel, with a stop at each end. The view opens
+  framing the whole arm, base plate to column top, at whatever shape the panel is, and Reset view frames it again.
+  Drag anywhere else to orbit, right-drag to pan, scroll to zoom.
 * **The bridge**: link lamp, the state window (READY, MOVING, NEEDS INIT, NO LINK), Initialize, E-STOP and STOP.
   Esc presses STOP from anywhere on the page, except during a drag, when it cancels the drag.
 * **Joints**: per-joint jog keys with step and speed detents, the position (J1, J2, J4 in degrees, J3 in mm), the
@@ -116,28 +118,31 @@ travel and negative going down. r is J4 relative to the J2 arm, so the tool's ya
 for random joints. `zarm_sim.model.sdk_to_model` and `model_to_sdk` convert between the two.
 
 The shapes are boxes and cylinders, in both visual and collision geometry: the base plate, the column (a box; the
-real sides are slightly bowed R140 arcs) and its cap, the J1 housing on the carriage, the two arms (a box between
-two round ends; the J2 arm tapers from R53 to R47.5, so its box takes the mean width) and the flange. Two kinds of
-visual-only part: the four mounting counterbores, and an amber tab on the flange's +X edge that isn't on the arm
-but makes J4 visible. Masses are the spec's 19 kg split by link (from hitbot_sim), spread over each link's shapes at
-uniform density to give its inertia; treat them as estimates.
+real sides are slightly bowed R140 arcs, and its front slots aren't modelled) and its cap, the J1 housing on the
+carriage, the two arms (a box between two round ends; the J2 arm tapers from R53 to R47.5, so its box takes the
+mean width) and the flange. Two kinds of visual-only part: the four mounting counterbores, and an amber tab on the
+flange's +X edge that isn't on the arm but makes J4 visible. Masses are the spec's 19 kg split by link (from
+hitbot_sim), spread over each link's shapes at uniform density to give its inertia; treat them as estimates.
 
 ### Dimensions and their sources
 
 Tags: **SPEC** Hitbot's [Z-Arm 2442E product page](https://www.hitbotrobot.com/product/robotic-arm-z-arm-2442e/).
 **DRAWING** Hitbot's motion-range drawing, `2442-Size-Diagram.zip` in the download centre (one PDF, "Z-Arm 2442",
 V1.1.0, updated 2020-01-18, A3 at 1:5). **STEP** Hitbot's CAD, `2442-3D-Diagram.zip` ("Z-Arm 2442 V1.0.0.stp",
-CATIA V5, 2020-08-14, mm), measured in the robot frame: its arm sits at J1 = J2 = 0 with the flange face 82.5 mm up;
-`scripts/fetch_cad_meshes.py` repeats the key measurements. **HITBOT_SIM** the MIT-licensed community URDF
+CATIA V5, 2020-08-14, mm), measured in the robot frame: its arm sits at J1 = J2 = 0 with the flange face 82.5 mm up,
+and it models the arm's outside only (no rails, belt or stops); `scripts/fetch_cad_meshes.py` repeats the key
+measurements. **HITBOT_SIM** the MIT-licensed community URDF
 `urdf/Z-Arm_10042C0.urdf` in [jjh1214/hitbot_sim](https://github.com/jjh1214/hitbot_sim), the 1 m column variant of
 the same arm family. **LEGACY** this repository's old C# "Z-Arm Sliders" app and the zarm-sdk defaults taken from it.
 **ASSUMED** chosen here, for the reason given.
 
 | Field | Value | Source |
 |---|---|---|
-| `z_stroke_mm` | 310 mm | LEGACY: z_travel 310 and the J3 slider range -310..0, which zarm-sdk uses as ZArmConfig.z_travel_mm and its J3 soft limits. SPEC sells 110/210/310/410/510 mm strokes. |
-| `reference_stroke_mm` | 210 mm | SPEC: standard Z-axis stroke 210 mm. |
-| `reference_height_mm` | 596 mm | SPEC: height 596 mm (with the 210 mm stroke); DRAWING: overall height 596. The STEP's column is 593 mm tall. |
+| `z_stroke_mm` | 310 mm | LEGACY: z_travel 310 and the J3 slider range -310..0, which zarm-sdk uses as ZArmConfig.z_travel_mm and its J3 soft limits. SPEC sells 110/210/310/410/510 mm strokes. The model's J3 range follows this one value, and so does the column's height once it's over 318.1 mm. |
+| `cad_column_height_mm` | 593 mm | STEP: the column's top cap ends 593 mm above the mounting surface. DRAWING: the cap's top line measures 593.0, under a 3 mm raised lid. ASSUMED: a 310 mm stroke fits this stock column, which the STEP's slots allow (see cad_slot_bottom_mm), so the column isn't grown for it. |
+| `cad_lid_height_mm` | 3 mm | DRAWING: a 3 mm raised lid on the cap, 596 mm overall; SPEC: height 596. Not in the STEP or the model. |
+| `cad_slot_bottom_mm` | 172 mm | STEP: the column's front opening (88 mm wide, its 52 mm centre strip leaving a slot either side) is open from 172 mm, where the electronics bay's sheet-metal bracket closes it, up to the cap at 578 mm. No rails, belt or stops are modelled, so the slots bound the J1 housing's travel: 345 mm of motion, or up to a 318.1 mm stroke from the drawing's lowest position. |
+| `cad_stroke_mm` | 240 mm | DRAWING: the configuration drawn: its lowest and highest positions are 240 mm apart (flange faces measured at 63.9 and 304.0 mm, J1 housing tops at 260.6 and 500.7 mm). SPEC lists 210 mm as the standard stroke. Information only, but for this: a stroke longer than the column holds stretches the part of the column the J1 housing sweeps over this travel. |
 | `base_plate_size_mm` | 200 mm | SPEC: foundation 200 x 200 x 10 mm; DRAWING; STEP. |
 | `base_plate_thickness_mm` | 10 mm | SPEC; DRAWING (10); STEP. |
 | `mount_hole_spacing_mm` | 160 mm | SPEC: fixing holes 160 x 160 mm, 4 x M8; DRAWING: 4 x 8.5 through, 14 counterbore 5 deep. |
@@ -153,16 +158,17 @@ the same arm family. **LEGACY** this repository's old C# "Z-Arm Sliders" app and
 | `j2_arm_elbow_radius_mm` | 53 mm | STEP: R53 round end about the elbow axis. |
 | `j2_arm_tool_radius_mm` | 47.5 mm | STEP: R47.5 round end about the J4 axis; DRAWING view A-A: about 95 wide. |
 | `j2_arm_thickness_mm` | 50 mm | STEP: 89.4 to 139.4 mm at the STEP's height; DRAWING: about 45 plus covers. |
-| `arm_gap_mm` | 2 mm | STEP: 2 mm between the J2 arm's top and the J1 arm's underside. ASSUMED: the same gap under the J1 housing (the STEP's housing is recessed around the J1 arm's hub; DRAWING shows a gap of about 2.5). |
+| `arm_gap_mm` | 2 mm | STEP: 2 mm between the J2 arm's top and the J1 arm's underside. |
 | `flange_diameter_mm` | 84 mm | STEP: 84 mm boss on the J4 axis. DRAWING view A-A gives the tool interface (72, 55, 40 H7). |
 | `flange_protrusion_mm` | 6.9 mm | STEP: flange face at 82.5 mm, J2 arm underside at 89.4 mm. |
 | `housing_width_mm` | 100 mm | STEP: J1 housing y = +/-50 mm with an R50 nose about J1; DRAWING front view 101. |
-| `housing_top_above_flange_mm` | 195.9 mm | STEP: housing top at 278.4 mm with the flange face at 82.5 mm; DRAWING: about 195.6. |
-| `flange_face_at_bottom_mm` | 64 mm | DRAWING: 64 +/- 1 mm from the mounting surface to the flange face at the lowest position. ASSUMED: that is the bottom of the 310 mm stroke too (the drawing's two positions are 240 mm apart on a 210 mm-stroke arm, so the rated stroke may sit up to 30 mm higher). |
+| `housing_bottom_above_flange_mm` | 134.9 mm | STEP: the J1 housing's underside, where it meets the column, at 217.4 mm with the flange face at 82.5 mm (3 mm above the J1 arm; it dips lower only around the J1 hub). DRAWING: about 134.6. |
+| `housing_top_above_flange_mm` | 195.9 mm | STEP: housing top at 278.4 mm with the flange face at 82.5 mm; DRAWING: about 196.7. |
+| `flange_face_at_bottom_mm` | 64 mm | DRAWING: 64 +/- 1 mm from the mounting surface to the flange face at the lowest position (63.9 measured in both the side and front views). ASSUMED: the same with the 310 mm stroke, in the same column. |
 | `j1_range_deg` | 90 deg | SPEC: 1st axis +/-90 deg (LEGACY sliders and zarm-sdk agree). |
 | `j2_range_deg` | 164 deg | SPEC: 2nd axis +/-164 deg (LEGACY sliders and zarm-sdk agree). |
 | `j4_range_deg` | 1080 deg | SPEC: R axis +/-1080 deg (zarm-sdk's soft limit is +/-180). |
-| `total_mass_kg` | 19 kg | SPEC: weight 19 kg (210 mm stroke; the extra 100 mm of column is ignored). |
+| `total_mass_kg` | 19 kg | SPEC: weight 19 kg (the 596 mm arm; a grown column's extra metal is ignored). |
 | `carriage_mass_kg` | 0.99 kg | HITBOT_SIM: link1 (the Z carriage) 0.994 kg. |
 | `j1_arm_mass_kg` | 5.86 kg | HITBOT_SIM: link2 (the J1 arm with its motors) 5.858 kg. |
 | `j2_arm_mass_kg` | 3.43 kg | HITBOT_SIM: link3 (the J2 arm with the R drive) 3.433 kg. |
@@ -174,9 +180,12 @@ the same arm family. **LEGACY** this repository's old C# "Z-Arm Sliders" app and
 | `j3_effort_n` | 300 N | ASSUMED placeholder: about twice the weight of the arms plus a 3 kg payload. |
 | `j4_effort_nm` | 5 N m | ASSUMED placeholder. |
 
-Derived: overall height 696 mm (596 + 310 - 210); flange face 64 mm above the mounting surface at the bottom of
-travel and 374 mm at the top; base and column 8.6 kg (19 kg less the moving links); the J1 housing 62 mm tall, from
-2 mm above the J1 arm to 195.9 mm above the flange face (the drawing shows about 62).
+Derived: the column 593 mm tall to its cap (596 mm with the drawing's lid), Hitbot's column as drawn; flange face
+64 mm above the mounting surface at the bottom of travel and 374 mm at the top; the J1 housing 61 mm tall, from
+134.9 to 195.9 mm above the flange face, so over the 310 mm stroke it sweeps 198.9 to 569.9 mm of the column's slot
+(open from 172 to 578 mm), leaving 26.9 mm of slot below it and 8.1 mm above; base and column 8.6 kg (19 kg less the
+moving links). The slots hold strokes up to 318.1 mm. A longer stroke (`z_stroke_mm` 410, say) grows the column by
+exactly the shortfall (91.9 mm), so the J1 housing just reaches the cap at J3 = 0.
 
 Hitbot's drawing also gives, without being modelled: the base's R15 corners, two 8 mm H7 dowel holes 120 mm apart,
 and the tool interface in view A-A (as read: a 40 mm H7 pilot, two 3 mm dowel holes 64 mm apart, 4 x M4 on
@@ -185,11 +194,12 @@ and the tool interface in view A-A (as read: a 40 mm H7 pilot, two 3 mm dowel ho
 ### Assumptions
 
 1. The arm is a **Z-Arm 2442** (220 and 200 mm arms) with a **310 mm** Z stroke, as the legacy code configures it.
-2. The column is **596 + 100 = 696 mm** tall: Hitbot lists 596 mm for the 210 mm stroke and sells strokes in 100 mm
-   steps; we assume the column grows by the same amount.
-3. The flange face is **64 mm** above the mounting surface at the bottom of travel (J3 = -310) and **374 mm** at the
-   top (J3 = 0). The drawing shows 64 ± 1 mm at its lowest position, but its two positions are 240 mm apart while the
-   spec says 210, so the rated stroke may sit up to 30 mm higher on the real arm.
+2. The 310 mm stroke fits Hitbot's **stock column, 593 mm** to the cap (596 mm with its lid, the spec's height): the
+   STEP's slots let the J1 housing travel 345 mm, enough for 318.1 mm from the drawing's lowest position. Hitbot's
+   drawing shows that column with 240 mm between its lowest and highest positions, and the spec lists 210 mm as the
+   standard stroke, so the real 310 mm arm may have a taller column. Measure it.
+3. The flange face is **64 mm** above the mounting surface at the bottom of travel (J3 = -310), the drawing's 64 ± 1
+   mm at its lowest position, and **374 mm** at the top (J3 = 0).
 4. The SDK's Cartesian frame (`sdk_origin`) is on the J1 axis at the flange face's height at J3 = 0, so the SDK's
    z equals J3. The controller's own frame is unverified.
 5. zarm-sdk's conventions: J1 = J2 = 0 along +X, counter-clockwise positive, r relative to the J2 arm, and the
@@ -241,13 +251,16 @@ uv run zarm-sim/scripts/fetch_cad_meshes.py      # needs uv; installs build123d 
 ```
 
 The script downloads `2442-3D-Diagram.zip` into `zarm-sim/cache/cad/`, checks its size and SHA-256 (and the STEP's),
-checks the CAD against the model (axes 220 and 200 mm apart, J1 133 mm from the base centre, square to the base),
-splits it into the URDF's links, and writes one binary STL per link to `zarm-sim/cache/meshes/` with a manifest.
-git ignores `cache/`. The CAD is the 593 mm-tall, 210 mm-stroke arm, so the script stretches the column's middle to
-the model's 696 mm; that stretch is an approximation. Restart the server and the view draws the meshes. Without
-them, as on a fresh clone, or with meshes made for an older model, the view draws the model's own shapes and says
-why, with this checkout's exact command and a Copy key. The URDF, the MJCF and the tests always use those shapes:
-they're the collision geometry.
+checks the CAD against the model (axes 220 and 200 mm apart, J1 133 mm from the base centre, square to the base; and
+down the middle of the column's front slots, where they open and close, the column's top and the J1 housing's
+underside and top), splits it into the URDF's links, and writes one binary STL per link to `zarm-sim/cache/meshes/`
+with a manifest. git ignores `cache/`. The 310 mm stroke fits Hitbot's column as drawn, so the meshes are the CAD's
+own shapes; the J1 housing's travel fills the slots but for 26.9 mm below and 8.1 mm above. For a stroke over
+318.1 mm the script grows the column by the shortfall, stretching the plain middle of the column the J1 housing
+sweeps over the drawing's 240 mm travel (198.9 to 499.9 mm) and moving the slot's end and the cap up unchanged; that
+stretch is an approximation. Restart the server and the view draws the meshes. Without them, as on a fresh clone, or
+with meshes made for an older model, the view draws the model's own shapes and says why, with this checkout's exact
+command and a Copy key. The URDF, the MJCF and the tests always use those shapes: they're the collision geometry.
 
 ## Tests
 
@@ -259,8 +272,11 @@ py -3.12 -m unittest discover -s tests -t .
 Standard-library `unittest`, like zarm-sdk's, and nothing touches hardware. They check that the generated files are
 byte-identical to the generator's output (also across interpreters), that every dimension has a source and appears
 above, that the URDF's forward kinematics match `zarm.kinematics.forward_xy` at 220/200 mm (and tool yaw and J3) for
-random joints, the SDK-to-model joint mapping both ways, the MJCF's prefixed, composable pieces, the reach envelope
-and blind zone against the SDK's inverse kinematics, three.js's checked download and the mesh cache's checks, and the
+random joints, the SDK-to-model joint mapping both ways, the MJCF's prefixed, composable pieces, the Z travel (the
+J1 housing's sweep inside the column's slot with 26.9 mm to spare below and 8.1 mm above, in the URDF and, where
+they've been made, in the CAD meshes; and for every stroke option, the column grown by exactly the shortfall), the
+reach envelope and blind zone against the SDK's inverse kinematics, three.js's checked download and the mesh cache's
+checks, and the
 HTTP API on an ephemeral port (exact jogs, queueing, SDK refusals, Stop, E-stop and Initialize, the Host and token
 checks, the page-quiet stop, and that only the simulated backend is accepted). The MuJoCo tests run when `mujoco` is
 installed and skip otherwise. When `node` is on the PATH, the JavaScript is syntax-checked and the page's blind-zone
@@ -291,8 +307,9 @@ state, amber for motion, green for ready, red for stop and refusals; tape colour
 
 * **Simulator only.** The view drives `FakeBackend`, whose timing (each joint at constant speed, the slowest
   setting the duration), limits and refusals follow zarm-sdk's model of the controller, not the controller itself.
-* **Dimensions.** Primitive shapes, with the assumptions above; the CAD meshes are optional and the column stretch
-  in them is approximate. Not modelled: cables, the end effector, the connector panel, the column's bowed sides.
+* **Dimensions.** Primitive shapes, with the assumptions above; the CAD meshes are optional, and a column grown for
+  a stroke over 318.1 mm is an approximation. Not modelled: cables, the end effector, the connector panel, the
+  column's bowed sides, the cap's 3 mm lid, and what's inside the column (guide rails, belt, pulleys, end stops).
 * **The blind zone** is a plan-view check of the J2 arm against the column, in the view only: Move refuses plans
   that cross it, but the jog keys, the move forms and the SDK don't check it, and a tool hanging below the flange
   isn't included.

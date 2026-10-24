@@ -85,18 +85,36 @@ class DimensionTests(unittest.TestCase):
 
     def test_derived_heights(self):
         d = ZArmDimensions()
-        self.assertEqual(d.overall_height_mm, 696.0)  # 596 for the 210 mm stroke, plus 100 mm
+        self.assertEqual(d.overall_height_mm, 593.0)  # Hitbot's column as drawn: the 310 mm stroke fits its slots
+        self.assertEqual(d.overall_height_with_lid_mm, 596.0)  # with the drawing's 3 mm lid, SPEC's height
+        self.assertEqual(d.column_growth_mm, 0.0)
+        self.assertAlmostEqual(d.stock_stroke_limit_mm, 318.1)  # 578 under the cap, less 64 + 195.9
         self.assertEqual(d.flange_face_at_top_mm, 374.0)  # 64 at the bottom of a 310 mm stroke
+        for got, want in zip(d.travel_zone_mm(), (198.9, 569.9)):
+            self.assertAlmostEqual(got, want, delta=1e-9)
+        for got, want in zip(d.slot_clearances_mm(), (26.9, 8.1)):  # open slot below and above the J1 housing
+            self.assertAlmostEqual(got, want, delta=1e-9)
+        for got, want in zip(d.stretch_zone_mm, (198.9, 499.9)):  # swept over the drawn 240 mm travel
+            self.assertAlmostEqual(got, want, delta=1e-9)
         self.assertAlmostEqual(d.base_mass_kg, 8.6)
         stack = d.stack_mm()
-        self.assertEqual(stack["housing"], (133.9, 195.9))  # 62 mm tall, as the drawing shows
-        self.assertAlmostEqual(stack["housing"][1] - stack["housing"][0], 62.0)
+        self.assertEqual(stack["housing"], (134.9, 195.9))  # 61 mm tall in the STEP; the drawing shows about 62
+        self.assertAlmostEqual(stack["housing"][0] - stack["j1_arm"][1], 3.0)  # the STEP's gap above the J1 arm
+        longer = ZArmDimensions(z_stroke_mm=410.0)  # needs 91.9 mm more slot than the stock column has
+        self.assertAlmostEqual(longer.column_growth_mm, 91.9)
+        self.assertAlmostEqual(longer.overall_height_mm, 684.9)
+        self.assertAlmostEqual(longer.slot_clearances_mm()[1], 0.0)
+        self.assertEqual(ZArmDimensions(z_stroke_mm=210.0).overall_height_mm, 593.0)  # a shorter stroke: the same column
 
     def test_validation_rejects_impossible_dimensions(self):
         with self.assertRaises(ValueError):
             ZArmDimensions(j1_axis_offset_mm=100.0).validate()  # the J1 arm's R53 end would cut into the column
         with self.assertRaises(ValueError):
             ZArmDimensions(housing_top_above_flange_mm=120.0).validate()
+        with self.assertRaises(ValueError):
+            ZArmDimensions(housing_bottom_above_flange_mm=130.0).validate()  # into the J1 arm
+        with self.assertRaises(ValueError):
+            ZArmDimensions(cad_slot_bottom_mm=200.0).validate()  # the travel would start below the slot
         with self.assertRaises(ValueError):
             ZArmDimensions(z_stroke_mm=-1.0).validate()
 

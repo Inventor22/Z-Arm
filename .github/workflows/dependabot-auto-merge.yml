@@ -1,0 +1,114 @@
+# Auto-merges Dependabot security updates: patch/minor bumps that replace a version affected by a
+# reviewed GitHub advisory, once every other check on the PR has passed. Major bumps, routine version
+# updates and PRs with failing checks stay open for review.
+name: Dependabot security auto-merge
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions: {}
+
+concurrency:
+  group: dependabot-auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  dependabot-auto-merge:
+    # pull_request_target has a write token: never check out or run code from the PR in this job.
+    if: github.event.pull_request.user.login == 'dependabot[bot]' && github.repository_owner == 'Inventor22'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: read
+      statuses: read
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+
+      - name: Merge security fix once checks pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
+          DEPS: ${{ steps.meta.outputs.updated-dependencies-json }}
+          SELF: dependabot-auto-merge
+        run: |
+          set -euo pipefail
+
+          case "$UPDATE_TYPE" in
+            version-update:semver-patch|version-update:semver-minor) ;;
+            *) echo "::notice::Left for review: '${UPDATE_TYPE:-unknown}' update. Only patch and minor bumps merge automatically."; exit 0 ;;
+          esac
+
+          # Security fixes only: a replaced version must be affected by a reviewed GitHub advisory.
+          # The advisory API matches names case-sensitively, so also try lowercase and (pip) normalized names.
+          fixes=""
+          while IFS=$'\t' read -r eco name prev; do
+            case "$eco" in
+              npm_and_yarn|bun) eco=npm ;;
+              pip|uv|pipenv|poetry|pip_compile) eco=pip ;;
+              bundler) eco=rubygems ;;
+              cargo) eco=rust ;;
+              go_modules) eco=go ;;
+              maven|gradle) eco=maven ;;
+              github_actions) eco=actions ;;
+              hex|mix) eco=erlang ;;
+              nuget|composer|pub|swift) ;;
+              *) continue ;;
+            esac
+            [ -n "$prev" ] || continue
+            lower=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')
+            affects="$name@$prev,$lower@$prev"
+            if [ "$eco" = pip ]; then affects="$affects,$(printf '%s' "$lower" | sed -E 's/[-_.]+/-/g')@$prev"; fi
+            ids=$(gh api -X GET /advisories -f type=reviewed -f ecosystem="$eco" -f affects="$affects" -f per_page=100 --jq '[.[].ghsa_id] | unique | join(",")')
+            if [ -n "$ids" ]; then fixes="$fixes $name@$prev ($ids)"; fi
+          done < <(jq -r '.[] | [.packageEcosystem, .dependencyName, .prevVersion] | @tsv' <<< "$DEPS")
+          if [ -z "$fixes" ]; then
+            echo "::notice::Left for review: no reviewed GitHub advisory affects the version being replaced, so this is not a security fix."
+            exit 0
+          fi
+          echo "Fixes:$fixes"
+
+          # Wait for the PR's other checks; never merge over a failing or unfinished one.
+          sleep 60
+          deadline=$((SECONDS + 1800))
+          while :; do
+            runs=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs?per_page=100" --jq '[.check_runs[] | {name, status, conclusion}]')
+            statuses=$(gh api "repos/$REPO/commits/$HEAD_SHA/status" --jq '[.statuses[] | {context, state}]')
+            failed=$(jq -rn --argjson r "$runs" --argjson s "$statuses" --arg self "$SELF" \
+              '[($r[] | select(.name != $self and .status == "completed" and (.conclusion | IN("success", "neutral", "skipped") | not)) | .name), ($s[] | select(.state == "failure" or .state == "error") | .context)] | join(", ")')
+            pending=$(jq -rn --argjson r "$runs" --argjson s "$statuses" --arg self "$SELF" \
+              '[($r[] | select(.name != $self and .status != "completed") | .name), ($s[] | select(.state == "pending") | .context)] | join(", ")')
+            if [ -n "$failed" ]; then echo "::error::Not merged: failing checks: $failed"; exit 1; fi
+            if [ -z "$pending" ]; then break; fi
+            if [ "$SECONDS" -ge "$deadline" ]; then echo "::error::Not merged: checks still running after 30 minutes: $pending"; exit 1; fi
+            sleep 30
+          done
+
+          mergeable=UNKNOWN
+          for _ in 1 2 3 4 5 6; do
+            mergeable=$(gh pr view "$PR" --repo "$REPO" --json mergeable --jq .mergeable)
+            if [ "$mergeable" != UNKNOWN ]; then break; fi
+            sleep 10
+          done
+          if [ "$mergeable" = CONFLICTING ]; then
+            echo "::notice::Not merged yet: conflicts with the base branch. Dependabot rebases it automatically, which re-runs this check."
+            exit 0
+          fi
+
+          if [ "$(gh api "repos/$REPO" --jq .allow_squash_merge)" = true ]; then method=--squash; else method=--merge; fi
+          for attempt in 1 2 3; do
+            if gh pr merge "$PR" --repo "$REPO" "$method" --match-head-commit "$HEAD_SHA" --delete-branch; then
+              echo "::notice::Merged security fix:$fixes"
+              exit 0
+            fi
+            sleep $((attempt * 15))
+          done
+          echo "::error::Merge failed after 3 attempts."
+          exit 1

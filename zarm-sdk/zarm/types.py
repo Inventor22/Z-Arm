@@ -1,9 +1,13 @@
 """Typed values for the Z-Arm SDK.
 
-Units are part of every field name. J1, J2 and J4 (and the tool rotation ``r``)
-are in degrees; J3 and Cartesian coordinates are in millimetres. Those are the
-units Hitbot's native library uses, so values cross the vendor boundary without
+Units are part of every field name. J1, J2 and J4 (the vendor's ``r``) are in
+degrees; J3 and Cartesian coordinates are in millimetres. Those are the units
+Hitbot's native library uses, so values cross the vendor boundary without
 conversion. The ``to_si()`` helpers convert to radians and metres.
+
+Several values below are default assumptions that have not been checked on
+the real arm; the README's "Default assumptions" section gives the evidence
+for each and how to override it.
 """
 
 from __future__ import annotations
@@ -19,6 +23,13 @@ from .errors import InvalidArgumentError
 
 FLOAT32_MAX = 3.4028234663852886e38
 C_INT_MIN, C_INT_MAX = -(2**31), 2**31 - 1
+
+# The card id the legacy C# code used for this arm (assumed still valid).
+LEGACY_CARD_ID = 59
+# Physical J1 and J2 link lengths of a Z-Arm 2442 (assumed model).
+DEFAULT_ARM_LENGTHS_MM: Tuple[float, float] = (220.0, 200.0)
+# What robot_set_arm_length must be given according to the vendor header. Not the physical lengths.
+VENDOR_ARM_LENGTHS_MM: Tuple[float, float] = (200.0, 200.0)
 
 
 class JointKind(enum.Enum):
@@ -61,8 +72,9 @@ class JointPositions:
     """Joint-space position.
 
     ``j3_mm`` is the vertical axis: 0 at the top of travel, negative going down.
-    ``j4_deg`` is the vendor's ``r`` value, which the library also uses as the
-    tool rotation in Cartesian commands (see the README for the caveat).
+    ``j4_deg`` is the vendor's ``r``: assumed to be the J4 joint angle relative
+    to the forearm, in Cartesian commands as well. The tool's yaw in the base
+    frame is then J1 + J2 + J4 (``zarm.kinematics.tool_yaw_deg``).
     """
 
     j1_deg: float
@@ -88,7 +100,12 @@ class JointPositions:
 
 @dataclass(frozen=True)
 class CartesianPose:
-    """Tool position in the arm's base frame, plus the vendor's rotation ``r``."""
+    """Tool position (x, y, z) in the arm's base frame, plus the vendor's ``r``.
+
+    ``r_deg`` is assumed to be the J4 joint angle relative to the forearm, not
+    the tool's yaw in the base frame (that is J1 + J2 + r; see
+    ``zarm.kinematics.tool_yaw_deg``).
+    """
 
     x_mm: float
     y_mm: float
@@ -126,11 +143,12 @@ class EncoderReading:
 
 @dataclass(frozen=True)
 class JointLimits:
-    """SDK-side soft limits, checked before a joint move is sent.
+    """Joint ranges: SDK-side soft limits, checked before a move is sent.
 
     The defaults are the slider ranges of the legacy "Z-Arm Sliders" app in this
-    repository. The controller enforces its own limits as well (it rejects
-    unreachable targets with ``MoveResult.UNREACHABLE``).
+    repository. For J1 and J2 they equal the Z-Arm 2442's rated ranges; for J4
+    they are much tighter than the rated ±1080°. The controller enforces its own
+    limits as well (it rejects unreachable targets with ``MoveResult.UNREACHABLE``).
     """
 
     j1_deg: Tuple[float, float] = (-90.0, 90.0)
@@ -141,6 +159,16 @@ class JointLimits:
     @classmethod
     def for_z_travel(cls, z_travel_mm: float) -> "JointLimits":
         return cls(j3_mm=(-float(z_travel_mm), 0.0))
+
+    @classmethod
+    def rated(cls, z_travel_mm: float = 310.0) -> "JointLimits":
+        """The Z-Arm 2442's rated ranges (assumed model). The simulator uses these as its hard limits."""
+        return cls(
+            j1_deg=(-90.0, 90.0),
+            j2_deg=(-164.0, 164.0),
+            j3_mm=(-float(z_travel_mm), 0.0),
+            j4_deg=(-1080.0, 1080.0),
+        )
 
     def range_of(self, joint: Joint) -> Tuple[float, float]:
         return getattr(self, joint_spec(joint).field)
@@ -203,14 +231,21 @@ def require_card_id(value: object) -> int:
 class ZArmConfig:
     """Connection, safety and timing settings for one arm.
 
-    ``card_id`` is the arm's id on the vendor server (the legacy code used 59).
-    Leave it ``None`` to discover it; discovery fails if more than one arm answers.
+    ``card_id`` is the arm's id on the vendor server. The real arm is assumed to
+    be ``LEGACY_CARD_ID`` (59). Leave it ``None`` to discover the arm instead;
+    discovery fails if more than one arm answers.
+
+    ``arm_lengths_mm`` are the physical J1 and J2 link lengths, used by the SDK's
+    kinematics, reach checks and the simulator. ``vendor_arm_lengths_mm`` is what
+    ``initialize()`` passes to ``robot_set_arm_length``; the vendor header says
+    those arguments must be 200 and 200 whatever the physical lengths are.
     """
 
     card_id: Optional[int] = None
     generation: int = 1
     z_travel_mm: int = 310
-    arm_lengths_mm: Tuple[float, float] = (200.0, 200.0)
+    arm_lengths_mm: Tuple[float, float] = DEFAULT_ARM_LENGTHS_MM
+    vendor_arm_lengths_mm: Tuple[float, float] = VENDOR_ARM_LENGTHS_MM
     joint_limits: Optional[JointLimits] = None
     max_joint_speed: float = 100.0
     max_linear_speed_mm_s: float = 100.0
@@ -233,10 +268,12 @@ class ZArmConfig:
             require_card_id(self.card_id)
         require_c_int("generation", self.generation, 1, 8)
         require_c_int("z_travel_mm (the C API takes an int)", self.z_travel_mm, 1, 100_000)
-        if len(self.arm_lengths_mm) != 2:
-            raise InvalidArgumentError("arm_lengths_mm must be (l1_mm, l2_mm)")
-        for index, length in enumerate(self.arm_lengths_mm):
-            require_positive_c_float(f"arm_lengths_mm[{index}]", length)
+        for field_name in ("arm_lengths_mm", "vendor_arm_lengths_mm"):
+            lengths = getattr(self, field_name)
+            if len(lengths) != 2:
+                raise InvalidArgumentError(f"{field_name} must be (l1_mm, l2_mm)")
+            for index, length in enumerate(lengths):
+                require_positive_c_float(f"{field_name}[{index}]", length)
         for name in (
             "max_joint_speed",
             "max_linear_speed_mm_s",

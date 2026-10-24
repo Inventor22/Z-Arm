@@ -71,7 +71,7 @@ narrows arguments (an `int` of `2**32` becomes 0, a `float` of `1e300` becomes i
 | `robot_is_connect` | `int (int card)` | verified | Same code as `card_number_is_connect`. Not used. |
 | `robot_initial` | `int (int card, int generation, int z_travel_mm)` | corroborated | **`z_travel` is an `int`** (the wrapper converts it to float). Codes 0/2/11/12/105 traced; 105 also shows a modal box. 1 = accepted; 3 = encoder error per header. May replace generation and z_travel with values the machine reports. |
 | `robot_unlock_position` | `int (int card)` | verified | 1 if connected (sets two shared-memory flags), else 0. |
-| `robot_set_arm_length` | `void (int card, float l1_mm, float l2_mm)` | inferred | Header: l1 must be 200. Legacy code: never while homing. |
+| `robot_set_arm_length` | `void (int card, float l1_mm, float l2_mm)` | inferred | Header: l1 is "reserved, you must introduce 200", and l2 is 200 for arms with J4, so these aren't the physical link lengths. The SDK sends `ZArmConfig.vendor_arm_lengths_mm` (200, 200). Legacy code: never while homing. |
 | `robot_get_scara_param` | `void (int card, float* x, float* y, float* z, float* angle1, float* angle2, float* r, bool* communicate_success, bool* initial_finish, bool* move_flag)` | corroborated | The C API has **no `servo_off_flag`** output (a dummy is passed internally). `initial_finish` is the flag whose absence makes moves return 3, so 1 means initialized; the old header comment says the opposite. |
 | `robot_get_encoder_param` | `void (int card, float* x, float* y, float* z, float* angle1, float* angle2, float* r)` | inferred | Calls `get_scara_real_coor`; output order per community wrappers. |
 | `robot_get_joint_state` | `int (int card, int joint)` | corroborated | Values 0..7 traced (see below). Some faults also show a **modal message box**. |
@@ -80,7 +80,7 @@ narrows arguments (an `int` of `2**32` becomes 0, a `float` of `1e300` becomes i
 | `robot_wait_stop` | `bool (int card)` | verified | **Unbounded**: loops `Sleep(10)` until stopped, no timeout. Never called by the SDK. |
 | `robot_movej_angle` | `int (int card, float angle1_deg, float angle2_deg, float z_mm, float r_deg, float speed, float roughly)` | corroborated | Order fixed by `robot_movel_z`. Codes below. |
 | `robot_movej_xyz` | `int (int card, float x_mm, float y_mm, float z_mm, float r_deg, float speed, float roughly)` | corroborated | Order fixed by `robot_movej_xy`. |
-| `robot_movej_xyz_lr` | `int (int card, float x_mm, float y_mm, float z_mm, float r_deg, float speed, float roughly, int lr)` | inferred | `lr` goes into the vendor IK; 7 = unreachable in that configuration. **Which value means which hand is unknown.** |
+| `robot_movej_xyz_lr` | `int (int card, float x_mm, float y_mm, float z_mm, float r_deg, float speed, float roughly, int lr)` | inferred | `lr` goes into the vendor IK; 7 = unreachable in that configuration. **Which value means which hand is unknown**; assumed 1 = J2 ≥ 0, -1 = J2 ≤ 0, 0 = current hand (README, assumption 3). |
 | `robot_movel_xyz` | `int (int card, float x_mm, float y_mm, float z_mm, float r_deg, float speed_mm_s)` | corroborated | Order fixed by `robot_movel_xy` and `robot_movel_xyz_by_offset`. |
 | `robot_movel_xyz_by_offset` | `int (int card, float dx_mm, float dy_mm, float dz_mm, float dr_deg, float speed_mm_s)` | verified | Current pose plus offsets, then `movel_xyz`. Not used. |
 | `robot_movej_xy` | `int (int card, float x_mm, float y_mm, float speed)` | verified | `movej_xyz` keeping z and r. Not used. |
@@ -89,19 +89,19 @@ narrows arguments (an `int` of `2**32` becomes 0, a `float` of `1e300` becomes i
 | `robot_movej_agnle12` | `int (int card, float angle1_deg, float angle2_deg, float speed)` | verified | Vendor typo for "angle12"; keeps z and r. Not used. |
 | `robot_change_attitude` | `int (int card, float speed)` | corroborated | Switches hand configuration. No wrapper pre-checks; codes 0/1/2/3/4/6/11/101 traced. |
 | `robot_stop_move` | `void (int card)` | verified | |
-| `robot_emergency_stop` | `void (int card)` | inferred | Starts a detached thread inside the DLL and returns at once; its effect on the servos is unverified. |
+| `robot_emergency_stop` | `void (int card)` | inferred | Starts a detached thread inside the DLL and returns at once; its effect on the servos is unverified. Assumed to latch until the next successful `robot_initial` (README, assumption 2). |
 | `robot_pause_move` | `int (int card)` | verified | 1 OK, 0 failure. |
 | `robot_resume_move` | `int (int card)` | verified | 1 OK, 0 failure. |
-| `robot_joint_home` | `int (int card, int joint)` | corroborated | **Clears the initialized flag on entry, before any check, so even a refused call de-initializes the arm.** 0 not connected, 2 joint outside 1..4, 3 refused by a status flag (traced); 1 = started (inferred). Moves the joint. |
+| `robot_joint_home` | `int (int card, int joint)` | corroborated | **Clears the initialized flag on entry, before any check, so even a refused call de-initializes the arm.** 0 not connected, 2 joint outside 1..4, 3 refused by a status flag (traced); 1 = started (inferred). Moves the joint. Assumed not to set the moving flag (README, assumption 6). |
 | `robot_set_drag_teach` | `bool (int card, bool enable)` | inferred | |
 | `robot_get_drag_teach` | `int (int card)` | verified | 0/1. |
 | `robot_set_cooperation_fun_state` | `bool (int card, bool enable)` | inferred | Legacy C# calls this `CooperationMode`. |
 | `robot_get_cooperation_fun_state` | `bool (int card)` | inferred | |
-| `robot_get_digital_io_in` | `int (int card, int io)` | corroborated | 3 not connected, -1 invalid io, else `NOT(controller bit)` as 0/1. Legacy notes: 0 = 24 V present (unverified). |
-| `robot_get_digital_io_out` | `int (int card, int io)` | corroborated | 3 not connected, -1 invalid io, else 0/1. |
+| `robot_get_digital_io_in` | `int (int card, int io)` | corroborated | 3 not connected, -1 invalid io, else `NOT(controller bit)` as 0/1. Assumed, from legacy notes: 0 = 24 V present (README, assumption 8). |
+| `robot_get_digital_io_out` | `int (int card, int io)` | corroborated | 3 not connected, -1 invalid io, else `NOT(controller bit)` as 0/1, read from the same status word as the inputs. Depending on two machine-type values the controller reports, the DLL also renumbers some outputs when reading them back (most combinations swap outputs 1 and 2); whether `set_digital_out` does the same wasn't traced. |
 | `robot_set_digital_io_out` | `bool (int card, int io, bool value)` | inferred | |
-| `robot_set_efg_state` | `int (int card, int efg_type, float distance)` | unknown | Electric gripper. Not used. |
-| `robot_get_efg_state` | `int (int card, int* efg_type, float* distance)` | unknown | Electric gripper. Not used. |
+| `robot_set_efg_state` | `int (int card, int efg_type, float distance)` | unknown | Electric gripper; assumed absent. Not used. |
+| `robot_get_efg_state` | `int (int card, int* efg_type, float* distance)` | unknown | Electric gripper; assumed absent. Not used. |
 
 ## Exports that are not bound
 

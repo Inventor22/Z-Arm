@@ -7,6 +7,18 @@ handling, and the rule that every ``robot_*`` call needs a successful
 ``net_port_initial`` first. Calls that would crash or misbehave with the real
 DLL raise :class:`FakeBackendMisuseError` instead.
 
+Where the real behaviour is unknown, the simulator follows the SDK's default
+assumptions (README, "Default assumptions"):
+
+* The arm is a Z-Arm 2442: 220 mm and 200 mm links, and the rated joint ranges
+  (``JointLimits.rated``) are the controller's hard limits.
+* ``set_arm_length`` arguments are recorded but don't change the kinematics.
+* ``joint_home`` moves the joint to 0 without setting the moving flag.
+* ``emergency_stop`` latches: the arm is uninitialized afterwards.
+* ``movej_xyz_lr``: lr > 0 selects J2 >= 0, lr < 0 selects J2 <= 0, 0 keeps the current hand.
+* 9 digital inputs and 3 outputs. An input with no signal reads 1 (0 means 24 V present);
+  an output reads back what was last written.
+
 Motion follows the vendor header's speed model: each joint needs
 ``|delta| / speed`` seconds and the slowest joint sets the duration.
 """
@@ -21,9 +33,11 @@ from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from . import kinematics
 from .backend import Backend, EncoderParam, ScaraParam
-from .types import JointLimits, JointPositions
+from .types import DEFAULT_ARM_LENGTHS_MM, JointLimits, JointPositions
 
 Joints = Tuple[float, float, float, float]
+
+INPUT_NO_SIGNAL = 1  # assumed: the DLL reports 0 when 24 V is present
 
 
 class FakeBackendMisuseError(AssertionError):
@@ -61,11 +75,16 @@ class _Motion:
     end: Joints
     linear_xy: Optional[Tuple[Tuple[float, float], Tuple[float, float], int]] = None
     paused_at_s: Optional[float] = None
+    homing: bool = False
 
 
 @dataclass
 class FakeArm:
-    """State of one simulated arm. Tests may read and change it directly."""
+    """State of one simulated arm. Tests may read and change it directly.
+
+    ``arm_lengths_mm`` are the physical link lengths the simulation uses;
+    ``vendor_arm_lengths_mm`` records the last ``set_arm_length`` call.
+    """
 
     card: int
     present: bool = True
@@ -77,7 +96,8 @@ class FakeArm:
     drag_teach: bool = False
     cooperation: bool = False
     joints: Joints = (0.0, 0.0, 0.0, 0.0)
-    arm_lengths_mm: Tuple[float, float] = (200.0, 200.0)
+    arm_lengths_mm: Tuple[float, float] = DEFAULT_ARM_LENGTHS_MM
+    vendor_arm_lengths_mm: Optional[Tuple[float, float]] = None
     joint_state_overrides: Dict[int, int] = field(default_factory=dict)
     init_results: List[int] = field(default_factory=list)
     forced_results: Dict[str, int] = field(default_factory=dict)
@@ -93,19 +113,25 @@ def _lerp(a: float, b: float, t: float) -> float:
 
 
 class FakeBackend(Backend):
-    """Simulated arms keyed by card id."""
+    """Simulated arms keyed by card id.
+
+    ``hard_limits`` defaults to ``JointLimits.rated(z_travel_mm)``.
+    ``digital_io_count``, if given, sets both I/O counts (kept for older callers).
+    """
 
     def __init__(
         self,
         cards: Iterable[int] = (1,),
         *,
         clock: Optional[Callable[[], float]] = None,
-        arm_lengths_mm: Tuple[float, float] = (200.0, 200.0),
+        arm_lengths_mm: Tuple[float, float] = DEFAULT_ARM_LENGTHS_MM,
         z_travel_mm: float = 310.0,
         hard_limits: Optional[JointLimits] = None,
         server_start_result: int = 1,
         connect_delay_s: float = 0.0,
-        digital_io_count: int = 8,
+        digital_input_count: int = 9,
+        digital_output_count: int = 3,
+        digital_io_count: Optional[int] = None,
         home_speed: float = 30.0,
     ) -> None:
         super().__init__()
@@ -114,10 +140,13 @@ class FakeBackend(Backend):
         self.arms: Dict[int, FakeArm] = {
             card: FakeArm(card, arm_lengths_mm=self.arm_lengths_mm) for card in cards
         }
-        self.hard_limits = hard_limits or JointLimits.for_z_travel(z_travel_mm)
+        self.hard_limits = hard_limits or JointLimits.rated(z_travel_mm)
         self.server_start_result = server_start_result
         self.connect_delay_s = connect_delay_s
-        self.digital_io_count = digital_io_count
+        if digital_io_count is not None:
+            digital_input_count = digital_output_count = digital_io_count
+        self.digital_input_count = digital_input_count
+        self.digital_output_count = digital_output_count
         self.home_speed = home_speed
         self.server_running = False
         self.calls: List[Tuple[str, tuple]] = []
@@ -197,6 +226,15 @@ class FakeBackend(Backend):
         arm.joints = self._settle(arm, self.clock())
         arm.motion = None
 
+    @staticmethod
+    def _moving(arm: FakeArm) -> bool:
+        """The vendor's moving flag. Assumed: homing does not set it."""
+        return arm.motion is not None and not arm.motion.homing
+
+    @staticmethod
+    def _homing(arm: FakeArm) -> bool:
+        return arm.motion is not None and arm.motion.homing
+
     def _violates(self, target: Joints) -> bool:
         return bool(self.hard_limits.violations(JointPositions(*target)))
 
@@ -238,7 +276,7 @@ class FakeBackend(Backend):
         if any(math.isnan(value) for value in checked):
             return 101
         self._settle(arm, self.clock())
-        if arm.motion is not None:
+        if self._moving(arm):
             return 0
         if roughly is not None and not 0.0 <= roughly <= 1.0:
             # The real library returns garbage (the card id) here; mimic it.
@@ -253,7 +291,7 @@ class FakeBackend(Backend):
             return 11
         return None
 
-    def _start_joint_motion(self, arm: FakeArm, target: Joints, speed: float) -> None:
+    def _start_joint_motion(self, arm: FakeArm, target: Joints, speed: float, homing: bool = False) -> None:
         now = self.clock()
         start = self._settle(arm, now)
         duration = max(abs(b - a) for a, b in zip(start, target)) / speed
@@ -261,7 +299,7 @@ class FakeBackend(Backend):
             arm.joints = target
             arm.motion = None
         else:
-            arm.motion = _Motion(now, duration, start, target)
+            arm.motion = _Motion(now, duration, start, target, homing=homing)
 
     def _solve(self, arm: FakeArm, x: float, y: float, z: float, r: float, elbow: int) -> Optional[Joints]:
         l1, l2 = arm.arm_lengths_mm
@@ -322,6 +360,10 @@ class FakeBackend(Backend):
                 return 12
             if any(arm.joint_state_overrides.get(joint) == 7 for joint in (1, 2, 3)):
                 return 105
+            self._settle(arm, self.clock())
+            if self._homing(arm):
+                # Legacy notes saw initial() return 3 (encoder error) straight after joint_home.
+                return 3
             arm.initialized = True
             return 1
 
@@ -331,12 +373,16 @@ class FakeBackend(Backend):
             return 1 if self._connected(self._arm("unlock_position", card)) else 0
 
     def set_arm_length(self, card: int, l1_mm: float, l2_mm: float) -> None:
+        """Records the arguments. The simulated kinematics keep using the physical lengths."""
         with self._lock:
             self._record("set_arm_length", card, l1_mm, l2_mm)
             arm = self._arm("set_arm_length", card)
+            self._settle(arm, self.clock())
             if arm.motion is not None:
-                raise FakeBackendMisuseError("set_arm_length while the arm is moving (legacy code warns against this)")
-            arm.arm_lengths_mm = (float(l1_mm), float(l2_mm))
+                raise FakeBackendMisuseError(
+                    "set_arm_length while the arm is moving or homing (legacy code warns against this)"
+                )
+            arm.vendor_arm_lengths_mm = (float(l1_mm), float(l2_mm))
 
     # State
 
@@ -354,7 +400,7 @@ class FakeBackend(Backend):
                 r_deg=r,
                 communicate_success=self._connected(arm),
                 initial_finish=arm.initialized,
-                move_flag=arm.motion is not None,
+                move_flag=self._moving(arm),
             )
 
     def get_encoder_param(self, card: int) -> EncoderParam:
@@ -374,7 +420,7 @@ class FakeBackend(Backend):
         with self._lock:
             arm = self._arm("is_stop", card)
             self._settle(arm, self.clock())
-            return arm.motion is None
+            return not self._moving(arm)
 
     # Motion
 
@@ -430,7 +476,7 @@ class FakeBackend(Backend):
             code = self._preamble(arm, "movej_xyz_lr", (x_mm, y_mm, z_mm, r_deg), speed, roughly)
             if code is not None:
                 return code
-            # Simulator convention only: lr > 0 selects J2 >= 0, lr < 0 selects J2 <= 0.
+            # Assumed convention (unverified): lr > 0 selects J2 >= 0, lr < 0 selects J2 <= 0, 0 keeps the hand.
             elbow = 1 if lr > 0 else -1 if lr < 0 else kinematics.elbow_of(arm.joints[1])
             target = self._solve(arm, x_mm, y_mm, z_mm, r_deg, elbow)
             if target is None:
@@ -497,7 +543,7 @@ class FakeBackend(Backend):
             self._freeze(arm)
             target = list(arm.joints)
             target[joint - 1] = 0.0
-            self._start_joint_motion(arm, tuple(target), self.home_speed)  # type: ignore[arg-type]
+            self._start_joint_motion(arm, tuple(target), self.home_speed, homing=True)  # type: ignore[arg-type]
             return 1
 
     def stop_move(self, card: int) -> None:
@@ -508,11 +554,13 @@ class FakeBackend(Backend):
             self._freeze(arm)
 
     def emergency_stop(self, card: int) -> None:
+        """Stops the arm and latches: it stays uninitialized until initial() succeeds again (assumed)."""
         with self._lock:
             self._record("emergency_stop", card)
             arm = self._arm("emergency_stop", card)
             arm.emergency_stop_count += 1
             self._freeze(arm)
+            arm.initialized = False
 
     def pause_move(self, card: int) -> int:
         with self._lock:
@@ -570,16 +618,16 @@ class FakeBackend(Backend):
             arm = self._arm("get_digital_io_in", card)
             if not self._connected(arm):
                 return 3
-            if not 0 <= io < self.digital_io_count:
+            if not 0 <= io < self.digital_input_count:
                 return -1
-            return arm.digital_in.get(io, 0)
+            return arm.digital_in.get(io, INPUT_NO_SIGNAL)
 
     def get_digital_io_out(self, card: int, io: int) -> int:
         with self._lock:
             arm = self._arm("get_digital_io_out", card)
             if not self._connected(arm):
                 return 3
-            if not 0 <= io < self.digital_io_count:
+            if not 0 <= io < self.digital_output_count:
                 return -1
             return arm.digital_out.get(io, 0)
 
@@ -587,7 +635,7 @@ class FakeBackend(Backend):
         with self._lock:
             self._record("set_digital_io_out", card, io, value)
             arm = self._arm("set_digital_io_out", card)
-            if not self._connected(arm) or not 0 <= io < self.digital_io_count:
+            if not self._connected(arm) or not 0 <= io < self.digital_output_count:
                 return False
             arm.digital_out[io] = 1 if value else 0
             return True

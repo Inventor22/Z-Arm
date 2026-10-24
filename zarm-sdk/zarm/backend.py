@@ -154,7 +154,7 @@ class Backend(abc.ABC):
 
     @abc.abstractmethod
     def set_arm_length(self, card: int, l1_mm: float, l2_mm: float) -> None:
-        """``robot_set_arm_length``."""
+        """``robot_set_arm_length``. The vendor-mandated arguments (200, 200), not the physical link lengths."""
 
     # State
 
@@ -216,7 +216,10 @@ class Backend(abc.ABC):
 
     @abc.abstractmethod
     def joint_home(self, card: int, joint: int) -> int:
-        """``robot_joint_home``. Clears initialization on entry (even when refused), then moves the joint."""
+        """``robot_joint_home``. Clears initialization on entry (even when refused), then moves the joint.
+
+        Assumed not to set the moving flag while homing.
+        """
 
     @abc.abstractmethod
     def stop_move(self, card: int) -> None:
@@ -224,7 +227,10 @@ class Backend(abc.ABC):
 
     @abc.abstractmethod
     def emergency_stop(self, card: int) -> None:
-        """``robot_emergency_stop``. Must be callable while another call is in progress."""
+        """``robot_emergency_stop``. Must be callable while another call is in progress.
+
+        Assumed to latch: the arm stays uninitialized until ``initial`` succeeds again.
+        """
 
     @abc.abstractmethod
     def pause_move(self, card: int) -> int:

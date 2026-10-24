@@ -154,7 +154,8 @@ FUNCTIONS: Tuple[NativeFunction, ...] = (
         None,
         (_CARD, ("l1_mm", ctypes.c_float), ("l2_mm", ctypes.c_float)),
         "inferred",
-        "Tail call to ControlBean::set_arm_length(float,float). Units/meaning per vendor header (l1 must be 200).",
+        "Tail call to ControlBean::set_arm_length(float,float). Per the vendor header l1 is reserved (must be 200) "
+        "and l2 is 200 with J4, so these are not the physical lengths; the SDK sends vendor_arm_lengths_mm.",
     ),
     _fn(
         "robot_get_scara_param",
@@ -245,7 +246,8 @@ FUNCTIONS: Tuple[NativeFunction, ...] = (
         ),
         "inferred",
         "Forwards to ControlBean::movej_xyz_lr(float x6, int). lr goes to the vendor's IK routine; returns 7 "
-        "when the target is unreachable in that configuration. Which lr value means which hand is unknown.",
+        "when the target is unreachable in that configuration. Which lr value means which hand is unknown; "
+        "assumed 1 = J2 >= 0, -1 = J2 <= 0, 0 = current hand.",
     ),
     _fn(
         "robot_movel_xyz",
@@ -324,7 +326,7 @@ FUNCTIONS: Tuple[NativeFunction, ...] = (
         (_CARD,),
         "inferred",
         "Tail call to void ControlBean::emergency_stop(), which starts a detached thread and returns at once. "
-        "What the thread does to the servos is unverified.",
+        "What the thread does to the servos is unverified; assumed to latch until the next successful initial.",
     ),
     _fn("robot_pause_move", ctypes.c_int, (_CARD,), "verified", "ControlBean::pause_move(): 1 OK, 0 failure."),
     _fn("robot_resume_move", ctypes.c_int, (_CARD,), "verified", "ControlBean::resume_move(): 1 OK, 0 failure."),
@@ -334,7 +336,8 @@ FUNCTIONS: Tuple[NativeFunction, ...] = (
         (_CARD, ("joint", ctypes.c_int)),
         "corroborated",
         "ControlBean::joint_home(int) clears the initialized flag on entry, before any check; 0 not connected, "
-        "2 joint outside 1..4, 3 refused by a status flag (traced); 1 = started (inferred). Moves the joint.",
+        "2 joint outside 1..4, 3 refused by a status flag (traced); 1 = started (inferred). Moves the joint; "
+        "assumed not to set the moving flag.",
     ),
     _fn(
         "robot_set_drag_teach",
@@ -376,7 +379,8 @@ FUNCTIONS: Tuple[NativeFunction, ...] = (
         ctypes.c_int,
         (_CARD, ("io", ctypes.c_int)),
         "corroborated",
-        "3 not connected, -1 invalid io, else 0/1 (traced).",
+        "3 not connected, -1 invalid io, else NOT(controller bit) as 0/1 (traced); some outputs are renumbered "
+        "on readback depending on the machine type.",
     ),
     _fn(
         "robot_set_digital_io_out",
@@ -390,7 +394,7 @@ FUNCTIONS: Tuple[NativeFunction, ...] = (
         ctypes.c_int,
         (_CARD, ("efg_type", ctypes.c_int), ("distance", ctypes.c_float)),
         "unknown",
-        "Tail call to int ControlBean::set_efg_state(int, float); electric gripper, semantics unknown.",
+        "Tail call to int ControlBean::set_efg_state(int, float); electric gripper, semantics unknown, assumed absent.",
         False,
     ),
     _fn(
@@ -398,7 +402,7 @@ FUNCTIONS: Tuple[NativeFunction, ...] = (
         ctypes.c_int,
         (_CARD, ("efg_type", _I), ("distance", _F)),
         "unknown",
-        "Tail call to int ControlBean::get_efg_state(int*, float*); electric gripper, semantics unknown.",
+        "Tail call to int ControlBean::get_efg_state(int*, float*); electric gripper, semantics unknown, assumed absent.",
         False,
     ),
 )

@@ -6,6 +6,9 @@ import time
 import unittest
 
 from zarm import (
+    DEFAULT_ARM_LENGTHS_MM,
+    LEGACY_CARD_ID,
+    VENDOR_ARM_LENGTHS_MM,
     AmbiguousArmError,
     ArmBusyError,
     ArmNotFoundError,
@@ -37,6 +40,7 @@ from zarm import (
     ZArm,
     ZArmConfig,
     ZArmError,
+    kinematics,
 )
 from zarm.arm import _stop_open_arms_at_exit
 
@@ -453,7 +457,7 @@ class ReviewRegressionTests(ArmTestCase):
     def test_cartesian_targets_respect_joint_limits(self):
         limits = JointLimits(j1_deg=(-10.0, 10.0))
         arm, fake, _ = ready_arm(config=ZArmConfig(card_id=59, joint_limits=limits))
-        # (250, 100) needs J1 of about -26 degrees with the current hand.
+        # (250, 100) needs J1 of about -25 degrees with the current hand.
         self.assert_nothing_sent(fake, lambda: arm.move_to_pose(CartesianPose(250, 100, 0, 0), speed=10), SoftLimitError)
         self.assert_nothing_sent(
             fake, lambda: arm.move_to_pose(CartesianPose(250, 100, 0, 0), speed=10, lr=1), SoftLimitError
@@ -468,7 +472,7 @@ class ReviewRegressionTests(ArmTestCase):
         arm, fake, _ = ready_arm(config=ZArmConfig(card_id=59, joint_limits=JointLimits(j1_deg=(-60.0, 60.0))))
         arm.move_joints(JointPositions(-20.0, 90.0, 0.0, 0.0), speed=50.0)
         start = arm.get_state().pose
-        target = CartesianPose(start.x_mm, -start.y_mm, 0.0, 0.0)  # needs J1 of about -70 degrees
+        target = CartesianPose(start.x_mm, -start.y_mm, 0.0, 0.0)  # needs J1 of about -65 degrees
         self.assert_nothing_sent(fake, lambda: arm.move_linear(target, speed_mm_s=50.0), SoftLimitError)
 
     def test_leaving_the_envelope_during_motion_stops_the_arm(self):
@@ -516,6 +520,182 @@ class ReviewRegressionTests(ArmTestCase):
         arm.connect()
         with self.assertRaises(InvalidArgumentError):
             arm.initialize(retry_delay_s=-1.0)
+
+class DefaultAssumptionTests(ArmTestCase):
+    """The README's default assumptions, as the SDK and the simulator implement them."""
+
+    def assert_nothing_sent(self, fake, call, error):
+        before = len(fake.calls)
+        with self.assertRaises(error):
+            call()
+        self.assertEqual(len(fake.calls), before, "nothing may be sent to the arm")
+
+    def test_config_defaults(self):
+        config = ZArmConfig()
+        self.assertEqual(LEGACY_CARD_ID, 59)
+        self.assertEqual(config.arm_lengths_mm, DEFAULT_ARM_LENGTHS_MM)
+        self.assertEqual(DEFAULT_ARM_LENGTHS_MM, (220.0, 200.0))
+        self.assertEqual(config.vendor_arm_lengths_mm, VENDOR_ARM_LENGTHS_MM)
+        self.assertEqual(VENDOR_ARM_LENGTHS_MM, (200.0, 200.0))
+        self.assertIsNone(config.card_id, "None discovers the arm; 59 is only the assumed id")
+
+    def test_physical_and_vendor_arm_lengths_are_separate(self):
+        clock = ManualClock()
+        arm = ZArm.simulated(ZArmConfig(arm_lengths_mm=(220.0, 200.0)), clock=clock, sleep=clock.sleep)
+        try:
+            card = arm.connect()
+            arm.initialize()
+            fake = arm.backend
+            self.assertIn(("set_arm_length", (card, 200.0, 200.0)), fake.calls)
+            self.assertEqual(fake.arms[card].vendor_arm_lengths_mm, (200.0, 200.0))
+            self.assertEqual(fake.arms[card].arm_lengths_mm, (220.0, 200.0))
+            state = arm.move_joints(JointPositions(30.0, 45.0, -20.0, 0.0), speed=50.0)
+            x, y = kinematics.forward_xy(30.0, 45.0, 220.0, 200.0)
+            self.assertAlmostEqual(state.pose.x_mm, x)
+            self.assertAlmostEqual(state.pose.y_mm, y)
+        finally:
+            arm.close()
+
+    def test_custom_vendor_arm_lengths_are_sent(self):
+        arm, fake, _ = ready_arm(config=ZArmConfig(card_id=59, vendor_arm_lengths_mm=(200.0, 150.0)))
+        self.assertIn(("set_arm_length", (59, 200.0, 150.0)), fake.calls)
+        self.assertEqual(fake.arms[59].arm_lengths_mm, DEFAULT_ARM_LENGTHS_MM)
+
+    def test_emergency_stop_latches(self):
+        arm, fake, _ = ready_arm()
+        arm.move_joints(TARGET, speed=10.0, wait=False)
+        arm.emergency_stop()
+        self.assertIs(arm.phase, ArmPhase.CONNECTED)
+        self.assertFalse(arm.is_moving())
+        self.assertFalse(arm.get_state().initialized)
+        self.assert_nothing_sent(fake, lambda: arm.move_joints(TARGET, speed=10.0), NotInitializedError)
+        arm.initialize()
+        self.assertEqual(arm.move_joints(TARGET, speed=50.0).joints, TARGET)
+
+    def test_emergency_stop_during_a_wait(self):
+        arm, fake, clock = ready_arm()
+        sleeps = []
+
+        def sleep(seconds):
+            sleeps.append(seconds)
+            clock.advance(seconds)
+            if len(sleeps) == 5:
+                arm.emergency_stop()
+
+        arm._sleep = sleep
+        with self.assertRaises(MotionIncompleteError):
+            arm.move_joints(TARGET, speed=10.0)
+        self.assertIs(arm.phase, ArmPhase.CONNECTED)
+        self.assertEqual(fake.arms[59].emergency_stop_count, 1)
+
+    def test_losing_initialization_mid_move_stops_the_arm(self):
+        arm, fake, clock = ready_arm()
+
+        def sleep(seconds):  # e.g. an emergency stop from somewhere else
+            clock.advance(seconds)
+            fake.arms[59].initialized = False
+
+        arm._sleep = sleep
+        with self.assertRaises(NotInitializedError):
+            arm.move_joints(TARGET, speed=10.0)
+        self.assertIs(arm.phase, ArmPhase.CONNECTED)
+        self.assertEqual(fake.arms[59].stop_count, 1)
+
+    def test_not_initialized_code_resyncs_the_phase(self):
+        arm, fake, _ = ready_arm()
+        fake.arms[59].initialized = False
+        with self.assertRaises(NotInitializedError):
+            arm.move_joints(TARGET, speed=10.0)
+        self.assertIs(arm.phase, ArmPhase.CONNECTED)
+
+    def test_homing_does_not_set_the_moving_flag(self):
+        arm, fake, clock = ready_arm()
+        arm.move_joints(JointPositions(30.0, 0.0, 0.0, 0.0), speed=50.0)
+        arm.start_homing(Joint.J1_SHOULDER)
+        clock.advance(0.5)
+        state = arm.get_state()
+        self.assertFalse(state.moving)
+        self.assertFalse(arm.is_moving())
+        self.assertLess(state.joints.j1_deg, 29.0, "the joint is moving all the same")
+        self.assert_nothing_sent(fake, arm.initialize, ArmBusyError)
+        self.assert_nothing_sent(fake, lambda: arm.start_homing(Joint.J2_ELBOW), ArmBusyError)
+        started = clock()
+        state = arm.wait_for_homing(timeout_s=30.0)
+        self.assertAlmostEqual(state.joints.j1_deg, 0.0)
+        self.assertGreaterEqual(clock() - started, 3.0, "min_wait_s")
+        arm.initialize()
+        self.assertEqual(arm.move_joints(TARGET, speed=50.0).joints, TARGET)
+
+    def test_wait_for_homing_also_works_if_homing_sets_the_flag(self):
+        arm, fake, _ = ready_arm()
+        fake._moving = lambda fake_arm: fake_arm.motion is not None
+        arm.move_joints(JointPositions(30.0, 0.0, 0.0, 0.0), speed=50.0)
+        arm.start_homing(Joint.J1_SHOULDER)
+        self.assertTrue(arm.get_state().moving)
+        self.assertAlmostEqual(arm.wait_for_homing(timeout_s=30.0).joints.j1_deg, 0.0)
+
+    def test_slow_homing_is_not_mistaken_for_settled(self):
+        arm, fake, _ = ready_arm()
+        fake.home_speed = 0.5  # deg/s: 30 degrees take a minute
+        arm.move_joints(JointPositions(30.0, 0.0, 0.0, 0.0), speed=50.0)
+        arm.start_homing(Joint.J1_SHOULDER)
+        with self.assertRaises(MotionTimeoutError):
+            arm.wait_for_homing(timeout_s=10.0)
+        self.assertEqual(fake.arms[59].stop_count, 1)
+        self.assert_nothing_sent(fake, arm.initialize, ArmBusyError)
+        arm.wait_for_homing(timeout_s=10.0)  # stopped now, so it settles
+        arm.initialize()
+
+    def test_wait_for_homing_without_homing(self):
+        arm, _, clock = ready_arm()
+        before = clock()
+        arm.wait_for_homing(timeout_s=5.0)
+        self.assertEqual(clock(), before)
+
+    def test_wait_for_homing_arguments(self):
+        arm, _, _ = ready_arm()
+        for kwargs in (
+            {"timeout_s": 0.0},
+            {"timeout_s": 2.0},  # shorter than min_wait_s
+            {"timeout_s": 5.0, "settle_s": 0.0},
+            {"timeout_s": 5.0, "min_wait_s": -1.0},
+            {"timeout_s": 5.0, "tolerance": 0.0},
+        ):
+            with self.subTest(kwargs=kwargs), self.assertRaises(InvalidArgumentError):
+                arm.wait_for_homing(**kwargs)
+
+    def test_lr_convention(self):
+        arm, _, _ = ready_arm()
+        target = CartesianPose(250.0, -100.0, -20.0, 0.0)
+        self.assertGreaterEqual(arm.move_to_pose(target, speed=50.0, lr=1).joints.j2_deg, 0.0)
+        self.assertLessEqual(arm.move_to_pose(target, speed=50.0, lr=-1).joints.j2_deg, 0.0)
+        state = arm.move_to_pose(CartesianPose(260.0, -90.0, -20.0, 0.0), speed=50.0, lr=0)
+        self.assertLessEqual(state.joints.j2_deg, 0.0, "0 keeps the current hand")
+
+    def test_r_is_the_wrist_joint_angle(self):
+        arm, _, _ = ready_arm()
+        state = arm.move_to_pose(CartesianPose(250.0, -100.0, -20.0, 15.0), speed=50.0)
+        self.assertAlmostEqual(state.joints.j4_deg, 15.0)
+        yaw = kinematics.tool_yaw_deg(state.joints.j1_deg, state.joints.j2_deg, state.pose.r_deg)
+        self.assertAlmostEqual(yaw, state.joints.j1_deg + state.joints.j2_deg + 15.0)
+
+    def test_wrist_soft_limit_can_be_widened_to_the_rated_range(self):
+        arm, fake, _ = ready_arm()
+        self.assert_nothing_sent(
+            fake, lambda: arm.move_joints(JointPositions(0.0, 0.0, 0.0, 900.0), speed=100.0), SoftLimitError
+        )
+        wide, _, _ = ready_arm(cards=(60,), config=ZArmConfig(card_id=60, joint_limits=JointLimits.rated()))
+        self.assertEqual(wide.move_joints(JointPositions(0.0, 0.0, 0.0, 900.0), speed=100.0).joints.j4_deg, 900.0)
+
+    def test_io_defaults(self):
+        arm, _, _ = ready_arm()
+        self.assertEqual(arm.read_digital_input(8), 1, "9 inputs; no signal reads 1")
+        with self.assertRaises(InvalidArgumentError):
+            arm.read_digital_input(9)
+        arm.write_digital_output(2, True)
+        self.assertEqual(arm.read_digital_output(2), 1)
+        with self.assertRaises(CommandError):
+            arm.write_digital_output(3, True)
 
 class LifecycleTests(ArmTestCase):
     def test_close_stops_a_moving_arm_and_releases_it(self):
@@ -636,13 +816,14 @@ class LifecycleTests(ArmTestCase):
         arm.close()
 
     def test_homing_requires_reinitialization(self):
-        arm, fake, _ = ready_arm()
+        arm, fake, clock = ready_arm()
         arm.move_joints(TARGET, speed=50.0)
         arm.start_homing(Joint.J1_SHOULDER)
         self.assertIs(arm.phase, ArmPhase.CONNECTED)
         with self.assertRaises(NotInitializedError):
             arm.move_joints(TARGET, speed=10.0)
-        arm.wait_until_stopped(timeout_s=10.0)
+        state = arm.wait_for_homing(timeout_s=30.0)
+        self.assertAlmostEqual(state.joints.j1_deg, 0.0)
         arm.initialize()
         self.assertAlmostEqual(arm.get_state().joints.j1_deg, 0.0)
         with self.assertRaises(InvalidArgumentError):
@@ -679,7 +860,7 @@ class StateAndIoTests(ArmTestCase):
         self.assertTrue(state.communicating)
         self.assertTrue(state.initialized)
         self.assertFalse(state.moving)
-        self.assertEqual(state.pose.x_mm, 400.0)
+        self.assertEqual(state.pose.x_mm, 420.0)  # fully extended: 220 mm + 200 mm links
         self.assertEqual(state.timestamp_s, clock())
         self.assertEqual(arm.get_encoder_reading().joints, state.joints)
 

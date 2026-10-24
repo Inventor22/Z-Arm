@@ -133,6 +133,7 @@ class ZArm:
         self._phase_lock = threading.Lock()
         self._phase = ArmPhase.CREATED
         self._card: Optional[int] = None
+        self._homing_joint: Optional[Joint] = None
 
     @classmethod
     def native(
@@ -162,7 +163,12 @@ class ZArm:
         sleep: Optional[Callable[[float], None]] = None,
         **backend_options: object,
     ) -> "ZArm":
-        """A ZArm over :class:`zarm.fake.FakeBackend` with one simulated arm."""
+        """A ZArm over :class:`zarm.fake.FakeBackend` with one simulated arm.
+
+        The simulated arm uses ``config.arm_lengths_mm`` and ``config.z_travel_mm``,
+        with the rated joint ranges (``JointLimits.rated``) as its hard limits.
+        Its card id is ``config.card_id``, or 1 if that is None.
+        """
         from .fake import FakeBackend
 
         config = config if config is not None else ZArmConfig()
@@ -262,10 +268,13 @@ class ZArm:
             self._sleep(self._config.discovery_poll_interval_s)
 
     def initialize(self, *, attempts: int = 4, retry_delay_s: float = 1.0) -> None:
-        """Run the vendor initialization, then unlock and set the arm lengths.
+        """Run the vendor initialization, then unlock and set the vendor arm-length arguments.
 
-        Retries only the codes the legacy app saw recover (0 and 3). This
-        energizes the arm; treat it like a motion command.
+        Needed after ``connect()``, after homing and after ``emergency_stop()``.
+        Retries only the codes the legacy app saw recover (0 and 3). Passes
+        ``config.vendor_arm_lengths_mm`` (not the physical lengths) to
+        ``robot_set_arm_length``. This energizes the arm; treat it like a motion
+        command.
         """
         attempts = require_c_int("attempts", attempts, 1, 100)
         retry_delay_s = require_number("retry_delay_s", retry_delay_s)
@@ -273,10 +282,14 @@ class ZArm:
             raise InvalidArgumentError(f"retry_delay_s must be >= 0, got {retry_delay_s:g}")
         with self._lock:
             card = self._require_connected("initialize")
-            if self.get_state().moving:
+            if self._homing_joint is not None:
                 raise ArmBusyError(
-                    "initialize", message="initialize: the arm is moving (e.g. homing); wait until it stops"
+                    "initialize",
+                    message=f"initialize: homing of {self._homing_joint.name} may still be running; "
+                    "call wait_for_homing() first",
                 )
+            if self.get_state().moving:
+                raise ArmBusyError("initialize", message="initialize: the arm is moving; wait until it stops")
             config = self._config
             self._set_phase(ArmPhase.CONNECTED)
             with _Guard(self, "initialize", armed=True):
@@ -291,7 +304,7 @@ class ZArm:
                 unlocked = self._backend.unlock_position(card)
                 if unlocked != 1:
                     raise NotConnectedError(f"unlock_position returned {unlocked}: the arm is not connected")
-                l1_mm, l2_mm = config.arm_lengths_mm
+                l1_mm, l2_mm = config.vendor_arm_lengths_mm
                 self._backend.set_arm_length(card, float(l1_mm), float(l2_mm))
                 self._set_phase(ArmPhase.INITIALIZED)
 
@@ -420,10 +433,15 @@ class ZArm:
     ) -> Optional[ArmState]:
         """Joint-interpolated move to a Cartesian target (``robot_movej_xyz``).
 
-        The path is generally not a straight line. Without ``lr`` the target must
-        be within the soft limits in the current hand configuration. Passing
-        ``lr`` (-1, 0 or 1) uses ``robot_movej_xyz_lr``; because the value-to-hand
-        mapping is unverified, both hand solutions must then be within the limits.
+        The path is generally not a straight line. ``target.r_deg`` is the J4
+        joint angle (assumed), and ``speed`` is taken to be the joint speed, as
+        in ``move_joints``. Without ``lr`` the target must be within the soft
+        limits in the current hand configuration.
+
+        Passing ``lr`` uses ``robot_movej_xyz_lr`` with the assumed convention:
+        1 selects the hand with J2 >= 0, -1 the hand with J2 <= 0, 0 keeps the
+        current hand. Because that mapping is unverified, both hand solutions
+        must then be within the soft limits.
         """
         target = self._checked_pose(target)
         speed = self._checked_speed("speed", speed, self._config.max_joint_speed)
@@ -513,7 +531,11 @@ class ZArm:
             return self._wait_for_motion("change_hand", self._motion_timeout(estimate, timeout_s), flipped, start)
 
     def wait_until_stopped(self, *, timeout_s: float) -> ArmState:
-        """Wait until the arm reports it is not moving; stops it and raises on timeout."""
+        """Wait until the arm reports it is not moving; stops it and raises on timeout.
+
+        This relies on the vendor's moving flag, which homing is assumed not to
+        set; use ``wait_for_homing()`` after ``start_homing()``.
+        """
         timeout_s = self._positive("timeout_s", timeout_s)
         self._require_connected("wait_until_stopped")
         with _Guard(self, "wait_until_stopped", armed=True):
@@ -524,8 +546,15 @@ class ZArm:
         self._backend.stop_move(self._require_connected("stop"))
 
     def emergency_stop(self) -> None:
-        """``robot_emergency_stop``. Its exact effect on the servos is unverified; the hardware E-stop is the real one."""
-        self._backend.emergency_stop(self._require_connected("emergency_stop"))
+        """``robot_emergency_stop``. Lock-free like ``stop()``, so it can interrupt a waiting command.
+
+        Assumed to latch (unverified): afterwards the arm counts as uninitialized
+        and motion is refused until ``initialize()`` succeeds again. The hardware
+        E-stop is the real safety stop.
+        """
+        card = self._require_connected("emergency_stop")
+        self._deinitialize()
+        self._backend.emergency_stop(card)
 
     def pause(self) -> None:
         """Pause the current motion. Lock-free like stop(). If the vendor refuses, the SDK stops the arm instead."""
@@ -548,21 +577,29 @@ class ZArm:
         """Start homing one joint (``robot_joint_home``); returns once the controller accepts. The joint moves.
 
         The vendor clears initialization as soon as this is called, even if it
-        then refuses, so the arm must be initialized again afterwards. Whether
-        the vendor reports homing as motion is unverified: wait a generous,
-        bounded time (for example ``wait_until_stopped``) before ``initialize()``.
+        then refuses. Homing is assumed not to set the vendor's moving flag, so
+        follow with ``wait_for_homing()``, which watches the joint positions
+        instead, and then ``initialize()``. One joint at a time.
         """
         number = self._joint_number(joint)
         with _Guard(self, "start_homing") as guard:
             with self._lock:
                 card = self._require_connected("start_homing")
+                if self._homing_joint is not None:
+                    raise ArmBusyError(
+                        "start_homing",
+                        message=f"start_homing: homing of {self._homing_joint.name} may still be running; "
+                        "call wait_for_homing() first",
+                    )
                 if self.get_state().moving:
                     raise ArmBusyError("start_homing", message="start_homing: the arm is moving; stop it first")
                 self._set_phase(ArmPhase.CONNECTED)
                 self._arm_guard(guard, "start_homing", initialized=False)
+                self._homing_joint = Joint(number)
                 result = coerce(HomeResult, self._backend.joint_home(card, number))
                 if result == HomeResult.OK:
                     return
+                self._homing_joint = None
                 if result == HomeResult.NOT_CONNECTED:
                     raise NotConnectedError("joint_home: the arm is not connected")
                 if result == HomeResult.INVALID_JOINT:
@@ -570,6 +607,41 @@ class ZArm:
                 raise CommandError(
                     "joint_home", message=f"joint_home refused: {describe(result)} (code {int(result)})"
                 )
+
+    def wait_for_homing(
+        self,
+        *,
+        timeout_s: float,
+        settle_s: float = 1.0,
+        min_wait_s: float = 3.0,
+        tolerance: float = 0.1,
+    ) -> ArmState:
+        """Wait for the homing started by ``start_homing()`` to finish. Returns at once if none is pending.
+
+        Homing is assumed not to set the vendor's moving flag, so this watches
+        the joint positions: it returns once at least ``min_wait_s`` has passed
+        (the legacy code waited 3 s before initializing) and no joint has moved
+        by more than ``tolerance`` (deg, or mm for J3) for ``settle_s``. If the
+        moving flag is set, it only extends the wait. Soft limits are not
+        monitored, because homing is a vendor procedure that may approach the end
+        stops. On timeout or any other error it stops the arm and raises; homing
+        then still counts as pending.
+        """
+        timeout_s = self._positive("timeout_s", timeout_s)
+        settle_s = self._positive("settle_s", settle_s)
+        tolerance = self._positive("tolerance", tolerance)
+        min_wait_s = require_number("min_wait_s", min_wait_s)
+        if min_wait_s < 0:
+            raise InvalidArgumentError(f"min_wait_s must be >= 0, got {min_wait_s:g}")
+        if max(settle_s, min_wait_s) > timeout_s:
+            raise InvalidArgumentError("timeout_s must be at least settle_s and min_wait_s")
+        self._require_connected("wait_for_homing")
+        if self._homing_joint is None:
+            return self.get_state()
+        with _Guard(self, "wait_for_homing", armed=True):
+            state = self._wait_for_settled_joints("wait_for_homing", timeout_s, settle_s, min_wait_s, tolerance)
+        self._homing_joint = None
+        return state
 
     # Modes and I/O
 
@@ -594,16 +666,17 @@ class ZArm:
         return bool(self._backend.get_cooperation_fun_state(self._require_connected("get_cooperation_mode")))
 
     def read_digital_input(self, io: int) -> int:
-        """Input level as the vendor reports it (0 or 1).
+        """Input level as the vendor reports it (0 or 1). Inputs are numbered from 0.
 
-        The library returns the inverse of the controller bit. Legacy notes in
-        this repository say 0 means a 24 V signal is present; confirm on hardware.
+        The library returns the inverse of the controller bit. Assumed, from
+        legacy notes: 0 means 24 V is present and 1 means no signal.
         """
         io = self._checked_io(io)
         card = self._require_connected("read_digital_input")
         return self._io_level("get_digital_io_in", io, self._backend.get_digital_io_in(card, io))
 
     def read_digital_output(self, io: int) -> int:
+        """Output level as the vendor reports it (0 or 1). Assumed: 1 after ``write_digital_output(io, True)``."""
         io = self._checked_io(io)
         card = self._require_connected("read_digital_output")
         return self._io_level("get_digital_io_out", io, self._backend.get_digital_io_out(card, io))
@@ -637,6 +710,12 @@ class ZArm:
                 raise NotConnectedError(f"the arm was closed during the operation (phase {self._phase.value})")
             self._phase = phase
 
+    def _deinitialize(self) -> None:
+        """Require initialize() again before motion. Never raises."""
+        with self._phase_lock:
+            if self._phase is ArmPhase.INITIALIZED:
+                self._phase = ArmPhase.CONNECTED
+
     def _require_connected(self, command: str) -> int:
         card = self._card
         if self._phase not in _ACTIVE or card is None:
@@ -665,10 +744,42 @@ class ZArm:
 
     # Internals: motion
 
-    @staticmethod
-    def _check_move_result(command: str, code: int) -> None:
-        if code != MoveResult.OK:
-            raise error_for_move_code(command, code)
+    def _check_move_result(self, command: str, code: int) -> None:
+        if code == MoveResult.OK:
+            return
+        if code in (MoveResult.NOT_INITIALIZED, MoveResult.JOINT_NEEDS_REINITIALIZATION):
+            self._deinitialize()  # the controller says so, e.g. after a latched emergency stop
+        raise error_for_move_code(command, code)
+
+    def _wait_for_settled_joints(
+        self, command: str, timeout_s: float, settle_s: float, min_wait_s: float, tolerance: float
+    ) -> ArmState:
+        """Poll until the joints stop changing, without trusting the moving flag to end the wait."""
+        config = self._config
+        started = self._clock()
+        deadline = started + timeout_s
+        reference: Optional[ArmState] = None
+        stable_since = started
+        while True:
+            state = self.get_state()
+            if not state.communicating:
+                raise ConnectionLostError(f"{command}: the arm stopped communicating", state)
+            if self._backend.is_collision(self._require_connected(command)):
+                raise CollisionError(command, message=f"{command}: collision reported", state=state)
+            moved = reference is None or any(
+                abs(now - before) > tolerance
+                for now, before in zip(state.joints.as_tuple(), reference.joints.as_tuple())
+            )
+            if moved or state.moving:
+                reference = state
+                stable_since = state.timestamp_s
+            elif state.timestamp_s - stable_since >= settle_s and state.timestamp_s - started >= min_wait_s:
+                return state
+            if state.timestamp_s >= deadline:
+                raise MotionTimeoutError(
+                    command, message=f"{command}: the joints were still moving after {timeout_s:.2f} s", state=state
+                )
+            self._sleep(config.poll_interval_s)
 
     def _wait_for_motion(
         self,
@@ -693,6 +804,13 @@ class ZArm:
                 baseline = self._limit_excess(state.joints)
             if not state.communicating:
                 raise ConnectionLostError(f"{command}: the arm stopped communicating", state)
+            if not state.initialized and self._phase is ArmPhase.INITIALIZED:
+                self._deinitialize()
+                raise NotInitializedError(
+                    command,
+                    message=f"{command}: the controller is no longer initialized (an emergency stop?)",
+                    state=state,
+                )
             if self._backend.is_collision(self._require_connected(command)):
                 raise CollisionError(command, message=f"{command}: collision reported during motion", state=state)
             self._check_envelope(command, state, baseline)
@@ -741,13 +859,14 @@ class ZArm:
         return min(computed, self._config.max_motion_timeout_s)
 
     def _pose_move_seconds(self, start: ArmState, target: CartesianPose, speed: float) -> float:
+        """Duration estimate, using the slower hand: which one the controller picks is not verified."""
         l1_mm, l2_mm = self._config.arm_lengths_mm
         other_axes = max(abs(target.z_mm - start.pose.z_mm), abs(target.r_deg - start.pose.r_deg))
         deltas = [
             max(abs(j1 - start.joints.j1_deg), abs(j2 - start.joints.j2_deg))
             for j1, j2 in kinematics.inverse_xy_solutions(target.x_mm, target.y_mm, l1_mm, l2_mm)
         ]
-        planar = min(deltas) if deltas else 360.0
+        planar = max(deltas) if deltas else 360.0
         return max(planar, other_axes) / speed
 
     def _joints_close(self, actual: JointPositions, target: JointPositions) -> bool:

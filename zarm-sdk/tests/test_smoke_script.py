@@ -102,6 +102,8 @@ class SimulatedRunTests(unittest.TestCase):
         self.assertEqual(calls.count("movej_angle"), 2)
         self.assertAlmostEqual(arm.backend.arms[59].joints[3], 0.0)
         self.assertIs(arm.phase, ArmPhase.CLOSED)
+        self.assertIn("forward_xy with arm_lengths_mm (220.0, 200.0): (420.0, 0.0) mm, off by 0.0 mm", output)
+        self.assertIn("forward_xy with vendor_arm_lengths_mm (200.0, 200.0): (400.0, 0.0) mm, off by 20.0 mm", output)
 
     def test_refuses_motion_when_the_return_position_is_outside_the_limits(self):
         code, arm, output = self.run_script(start_joints=(0.0, 0.0, 0.0, 200.0))

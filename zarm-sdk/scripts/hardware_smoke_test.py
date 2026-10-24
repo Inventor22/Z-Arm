@@ -3,13 +3,17 @@
 Nothing touches the arm unless you ask for each step explicitly:
 
     --i-am-at-the-estop   required for any hardware step: you are at the emergency stop
-    --card-id N           the arm's id on the vendor server (the legacy code used 59)
+    --card-id N           the arm's id on the vendor server (assumed 59, the legacy id)
     --connect             start the vendor server and connect; reads state, no motion
     --initialize          also run the vendor initialization (energizes the arm)
     --allow-motion        also rotate J4 by +/- --j4-delta-deg at --speed and back
                           (asks you to type MOVE unless --yes is given)
 
 ``--preflight-only`` checks the vendor directory statically and touches nothing.
+
+After connecting (and again after initializing) it prints a read-only check of
+the SDK's kinematic assumptions: the vendor's reported (x, y) against
+``forward_xy`` with the assumed link lengths.
 
 Example (connect and read state only):
 
@@ -22,13 +26,14 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import sys
 from pathlib import Path
 from typing import List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from zarm import JointPositions, ZArm, ZArmConfig, ZArmError  # noqa: E402
+from zarm import ArmState, JointPositions, ZArm, ZArmConfig, ZArmError, kinematics  # noqa: E402
 from zarm.native import LibraryReport, describe_python, inspect_library_dir  # noqa: E402
 
 EXIT_OK, EXIT_FAILED, EXIT_REFUSED = 0, 1, 2
@@ -42,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--library-dir", required=True, help="directory with small_scara_interface.dll, share.dll, server.exe")
     parser.add_argument("--preflight-only", action="store_true", help="static checks only; touches nothing")
-    parser.add_argument("--card-id", type=int, help="the arm's card id on the vendor server")
+    parser.add_argument("--card-id", type=int, help="the arm's card id on the vendor server (assumed 59)")
     parser.add_argument("--i-am-at-the-estop", action="store_true", help="confirm you are at the hardware E-stop")
     parser.add_argument("--connect", action="store_true", help="start the vendor server and connect (no motion)")
     parser.add_argument("--initialize", action="store_true", help="run the vendor initialization (energizes the arm)")
@@ -96,13 +101,28 @@ def print_report(report: LibraryReport) -> None:
         print(f"  problem: {problem}")
 
 
+def print_kinematics_check(state: ArmState, config: ZArmConfig) -> None:
+    """Compare the vendor's (x, y) with forward_xy under the physical and the vendor link lengths."""
+    joints, pose = state.joints, state.pose
+    print(f"kinematics check: J1 {joints.j1_deg:.2f} deg, J2 {joints.j2_deg:.2f} deg; "
+          f"vendor reports (x, y) = ({pose.x_mm:.1f}, {pose.y_mm:.1f}) mm")
+    candidates = (("arm_lengths_mm", config.arm_lengths_mm), ("vendor_arm_lengths_mm", config.vendor_arm_lengths_mm))
+    for label, lengths in candidates:
+        x, y = kinematics.forward_xy(joints.j1_deg, joints.j2_deg, *lengths)
+        error = math.hypot(x - pose.x_mm, y - pose.y_mm)
+        print(f"  forward_xy with {label} {lengths}: ({x:.1f}, {y:.1f}) mm, off by {error:.1f} mm")
+    print("  (a match within about 1 mm for arm_lengths_mm confirms the link lengths and angle conventions)")
+
+
 def run_hardware_steps(args: argparse.Namespace) -> int:
     config = ZArmConfig(card_id=args.card_id, max_joint_speed=MAX_SPEED)
     arm = ZArm.native(args.library_dir, config)
     try:
         print(f"connecting to card {args.card_id} (starts server.exe if needed)...")
         arm.connect(timeout_s=args.connect_timeout_s)
-        print("state:", arm.get_state())
+        state = arm.get_state()
+        print("state:", state)
+        print_kinematics_check(state, config)
         print("joint states:", {joint.name: state for joint, state in arm.get_joint_states().items()})
         if not args.initialize:
             return EXIT_OK
@@ -111,6 +131,7 @@ def run_hardware_steps(args: argparse.Namespace) -> int:
         arm.initialize()
         start = arm.get_state()
         print("state after initialize:", start)
+        print_kinematics_check(start, config)
         if not args.allow_motion:
             return EXIT_OK
 

@@ -50,6 +50,13 @@ class LimitTests(unittest.TestCase):
     def test_z_limits_follow_z_travel(self):
         self.assertEqual(ZArmConfig(z_travel_mm=210).resolved_joint_limits().j3_mm, (-210.0, 0.0))
 
+    def test_rated_ranges_of_the_assumed_model(self):
+        rated = JointLimits.rated(310)
+        self.assertEqual((rated.j1_deg, rated.j2_deg, rated.j3_mm), ((-90.0, 90.0), (-164.0, 164.0), (-310.0, 0.0)))
+        self.assertEqual(rated.j4_deg, (-1080.0, 1080.0))
+        soft = JointLimits()
+        self.assertEqual((soft.j1_deg, soft.j2_deg), (rated.j1_deg, rated.j2_deg))
+
 
 class ValidationTests(unittest.TestCase):
     def test_require_number(self):
@@ -89,6 +96,8 @@ class ValidationTests(unittest.TestCase):
             ZArmConfig(z_travel_mm=310.0),  # the C API takes an int
             ZArmConfig(z_travel_mm=0),
             ZArmConfig(arm_lengths_mm=(200.0, -1.0)),
+            ZArmConfig(vendor_arm_lengths_mm=(200.0,)),
+            ZArmConfig(vendor_arm_lengths_mm=(200.0, 0.0)),
             ZArmConfig(max_joint_speed=0.0),
             ZArmConfig(poll_interval_s=float("nan")),
             ZArmConfig(motion_start_grace_s=-1.0),

@@ -1,8 +1,20 @@
 """Planar kinematics for the Z-Arm's J1/J2 links.
 
-Assumed convention: J1 = J2 = 0 puts the arm fully extended along +X, and
-positive angles turn counter-clockwise seen from above. The legacy C# moves in
-this repository are consistent with that, but it is not verified on hardware.
+Assumed conventions (not verified on hardware; see the README's "Default
+assumptions"):
+
+* J1 = J2 = 0 puts the arm fully extended along +X, and positive angles turn
+  counter-clockwise seen from above. This is the usual SCARA convention, and
+  nothing in the legacy C# code contradicts it.
+* ``l1_mm`` is the J1 (shoulder) link and ``l2_mm`` the J2 (elbow) link: 220 mm
+  and 200 mm on a Z-Arm 2442, per Hitbot's spec sheet. These are physical
+  lengths, not the arguments of ``robot_set_arm_length``.
+* Z is 0 at the top of travel and negative going down, as in the legacy slider
+  app (-310 to 0) and the jjh1214/hitbot_sim URDF.
+* ``r`` is the J4 joint angle relative to the forearm (the vendor header calls
+  it "angle value of joint 4"), so the tool's yaw in the base frame is
+  J1 + J2 + r.
+
 The controller does its own kinematics; this module serves the simulator, the
 SDK's reach checks and motion-time estimates.
 """
@@ -17,6 +29,11 @@ def forward_xy(j1_deg: float, j2_deg: float, l1_mm: float, l2_mm: float) -> Tupl
     a1 = math.radians(j1_deg)
     a12 = math.radians(j1_deg + j2_deg)
     return (l1_mm * math.cos(a1) + l2_mm * math.cos(a12), l1_mm * math.sin(a1) + l2_mm * math.sin(a12))
+
+
+def tool_yaw_deg(j1_deg: float, j2_deg: float, r_deg: float) -> float:
+    """The tool's rotation about Z in the base frame, assuming ``r`` is relative to the forearm."""
+    return j1_deg + j2_deg + r_deg
 
 
 def reach_mm(l1_mm: float, l2_mm: float) -> Tuple[float, float]:

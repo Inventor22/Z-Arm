@@ -43,7 +43,10 @@ from .errors import (
 )
 from .fake import FakeBackend, FakeBackendMisuseError, ManualClock
 from .types import (
+    DEFAULT_ARM_LENGTHS_MM,
     JOINT_SPECS,
+    LEGACY_CARD_ID,
+    VENDOR_ARM_LENGTHS_MM,
     ArmState,
     CartesianPose,
     EncoderReading,
@@ -71,6 +74,7 @@ __all__ = [
     "CommandError",
     "ConnectStatus",
     "ConnectionLostError",
+    "DEFAULT_ARM_LENGTHS_MM",
     "EncoderParam",
     "EncoderReading",
     "FakeBackend",
@@ -88,6 +92,7 @@ __all__ = [
     "JointPositions",
     "JointSpec",
     "JointState",
+    "LEGACY_CARD_ID",
     "LibraryError",
     "LimitExceededError",
     "ManualClock",
@@ -102,6 +107,7 @@ __all__ = [
     "ServerStartResult",
     "SoftLimitError",
     "UnreachableError",
+    "VENDOR_ARM_LENGTHS_MM",
     "ZArm",
     "ZArmConfig",
     "ZArmConnectionError",

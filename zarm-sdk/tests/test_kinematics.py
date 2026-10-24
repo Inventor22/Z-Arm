@@ -13,6 +13,21 @@ class KinematicsTests(unittest.TestCase):
         self.assertAlmostEqual(x, 400.0)
         self.assertAlmostEqual(y, 0.0)
 
+    def test_assumed_z_arm_2442_links(self):
+        self.assertEqual(kinematics.forward_xy(0.0, 0.0, 220.0, 200.0), (420.0, 0.0))
+        x, y = kinematics.forward_xy(90.0, 0.0, 220.0, 200.0)
+        self.assertAlmostEqual(x, 0.0)
+        self.assertAlmostEqual(y, 420.0, msg="counter-clockwise is positive")
+        self.assertEqual(kinematics.reach_mm(220.0, 200.0), (20.0, 420.0))
+        for elbow in (1, -1):
+            j1, j2 = kinematics.inverse_xy(250.0, -100.0, 220.0, 200.0, elbow)
+            x, y = kinematics.forward_xy(j1, j2, 220.0, 200.0)
+            self.assertAlmostEqual(x, 250.0)
+            self.assertAlmostEqual(y, -100.0)
+
+    def test_tool_yaw_adds_the_joint_angles(self):
+        self.assertEqual(kinematics.tool_yaw_deg(30.0, 45.0, -10.0), 65.0)
+
     def test_round_trip_both_elbows(self):
         for j1, j2 in itertools.product((-80.0, -30.0, 0.0, 45.0, 89.0), (-150.0, -60.0, 20.0, 120.0)):
             x, y = kinematics.forward_xy(j1, j2, self.L1, self.L2)

@@ -3,7 +3,7 @@
 import math
 import unittest
 
-from zarm import FakeBackend, FakeBackendMisuseError, JointLimits, ManualClock
+from zarm import DEFAULT_ARM_LENGTHS_MM, FakeBackend, FakeBackendMisuseError, JointLimits, ManualClock
 
 
 def started(cards=(59,), **options):
@@ -137,7 +137,8 @@ class MotionTests(unittest.TestCase):
         self.assertFalse(done.move_flag)
         self.assertTrue(fake.is_stop(59))
         self.assertEqual((done.angle1_deg, done.angle2_deg, done.z_mm), (90.0, 30.0, -10.0))
-        self.assertAlmostEqual(done.x_mm, 200 * math.cos(math.radians(90)) + 200 * math.cos(math.radians(120)))
+        l1, l2 = DEFAULT_ARM_LENGTHS_MM
+        self.assertAlmostEqual(done.x_mm, l1 * math.cos(math.radians(90)) + l2 * math.cos(math.radians(120)))
 
     def test_stop_freezes_motion(self):
         fake, clock = initialized()
@@ -222,6 +223,65 @@ class MotionTests(unittest.TestCase):
     def test_hard_limits_are_configurable(self):
         fake, _ = initialized(hard_limits=JointLimits(j1_deg=(-10.0, 10.0)))
         self.assertEqual(fake.movej_angle(59, 20.0, 0.0, 0.0, 0.0, 10.0, 0.0), 4)
+
+
+class AssumptionTests(unittest.TestCase):
+    """Behaviour the simulator takes from the README's default assumptions."""
+
+    def test_default_hard_limits_are_the_rated_ranges(self):
+        fake, _ = initialized()
+        self.assertEqual(fake.hard_limits, JointLimits.rated(310))
+        self.assertEqual(fake.movej_angle(59, 0.0, 0.0, 0.0, 900.0, 100.0, 0.0), 1)
+        fake.stop_move(59)
+        self.assertEqual(fake.movej_angle(59, 0.0, 0.0, 0.0, 1100.0, 100.0, 0.0), 4)
+        self.assertEqual(fake.movej_angle(59, 95.0, 0.0, 0.0, 0.0, 100.0, 0.0), 4)
+
+    def test_set_arm_length_does_not_change_the_kinematics(self):
+        fake, _ = started()
+        fake.set_arm_length(59, 200.0, 200.0)
+        self.assertEqual(fake.arms[59].vendor_arm_lengths_mm, (200.0, 200.0))
+        self.assertEqual(fake.arms[59].arm_lengths_mm, (220.0, 200.0))
+        self.assertEqual(fake.get_scara_param(59).x_mm, 420.0)
+
+    def test_homing_moves_without_the_moving_flag(self):
+        fake, clock = initialized()
+        fake.movej_angle(59, 30.0, 0.0, 0.0, 0.0, 100.0, 0.0)
+        clock.advance(5.0)
+        self.assertEqual(fake.joint_home(59, 1), 1)
+        clock.advance(0.5)
+        param = fake.get_scara_param(59)
+        self.assertFalse(param.move_flag)
+        self.assertTrue(fake.is_stop(59))
+        self.assertAlmostEqual(param.angle1_deg, 15.0)
+        self.assertEqual(fake.movej_angle(59, 1.0, 0.0, 0.0, 0.0, 10.0, 0.0), 3, "not initialized, not busy")
+        self.assertEqual(fake.initial(59, 1, 310), 3, "legacy notes: encoder error straight after homing")
+        with self.assertRaises(FakeBackendMisuseError):
+            fake.set_arm_length(59, 200.0, 200.0)
+        clock.advance(1.0)
+        self.assertAlmostEqual(fake.get_scara_param(59).angle1_deg, 0.0)
+        self.assertEqual(fake.initial(59, 1, 310), 1)
+
+    def test_emergency_stop_latches(self):
+        fake, clock = initialized()
+        fake.movej_angle(59, 30.0, 0.0, 0.0, 0.0, 10.0, 0.0)
+        clock.advance(1.0)
+        fake.emergency_stop(59)
+        param = fake.get_scara_param(59)
+        self.assertFalse(param.move_flag)
+        self.assertFalse(param.initial_finish)
+        self.assertAlmostEqual(param.angle1_deg, 10.0)
+        self.assertEqual(fake.movej_angle(59, 1.0, 0.0, 0.0, 0.0, 10.0, 0.0), 3)
+        self.assertEqual(fake.initial(59, 1, 310), 1)
+        self.assertEqual(fake.movej_angle(59, 1.0, 0.0, 0.0, 0.0, 10.0, 0.0), 1)
+
+    def test_io_counts_and_levels(self):
+        fake, _ = started()
+        self.assertEqual(fake.get_digital_io_in(59, 0), 1, "no signal")
+        self.assertEqual(fake.get_digital_io_in(59, 8), 1)
+        self.assertEqual(fake.get_digital_io_in(59, 9), -1)
+        self.assertEqual(fake.get_digital_io_out(59, 2), 0)
+        self.assertEqual(fake.get_digital_io_out(59, 3), -1)
+        self.assertFalse(fake.set_digital_io_out(59, 3, True))
 
 
 class StateAndIoTests(unittest.TestCase):

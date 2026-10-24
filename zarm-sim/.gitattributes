@@ -1,0 +1,3 @@
+# The generated models are checked byte for byte against the generator (tests/test_generate.py), so they keep LF
+# line endings in every checkout.
+models/* text eol=lf

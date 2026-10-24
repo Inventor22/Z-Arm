@@ -1,0 +1,143 @@
+<!doctype html>
+<!--
+THESIS: The umbratek jog desk in rehearsal, cut to the Z-Arm's four channels: the 3D monitor is the subject, every control sits on the desk beside it, and a printed SIMULATED placard rides in the sticky bridge so nobody mistakes this for the arm. Refuses buttons floating over a viewport.
+OWN-WORLD: Matte charcoal desk, well-black monitor and windows, charcoal key caps with a 2px travel edge. Colour is light that reports state: amber moving or queued, green live and ready, red stop, refusal or blind zone. Scribble tapes name J1-J4. One system sans, tabular figures, uppercase printed legends. SIMULATED is a paper placard in marker ink.
+STORY: The owner sees it is a simulation, reads where the arm is, jogs or sends a move, and reads every SDK refusal in plain words.
+FIRST VIEWPORT: Bridge: name and link lamp, placard, state window, Initialize, E-stop, STOP far right. Monitor left at full height; joints and pose right, the moves one scroll further down; message line pinned below.
+FORM: inherited world (umbratek-code DESIGN.md); precise brief, no seed.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Z-Arm simulator · SIMULATED</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/web/style.css">
+<!-- three.js, for the 3D view: the server downloads it on its first run, checks it and serves it from this PC. -->
+<script type="importmap">{"imports": {"three": "/vendor/three/build/three.module.js", "three/addons/": "/vendor/three/examples/jsm/"}}</script>
+<script type="application/json" id="zarm-config">__CONFIG_JSON__</script>
+<script type="module" src="/web/app.js"></script>
+</head>
+<body>
+<header class="bridge">
+  <div class="name">
+    <span class="lamp" id="linkLamp" aria-hidden="true"></span>
+    <div>
+      <h1>Z-Arm 2442</h1>
+      <p id="linkText" class="link-text" aria-live="polite">Connecting to the simulator&hellip;</p>
+    </div>
+  </div>
+  <p class="placard" role="note"><strong>SIMULATED</strong><span>zarm FakeBackend &middot; no hardware</span></p>
+  <div class="state-window" id="stateWindow" data-tone="idle" aria-live="polite">
+    <strong id="stateWord">CONNECTING</strong>
+    <span id="stateLine">Waiting for the first status report.</span>
+  </div>
+  <button id="initialize" type="button" class="key init-key" disabled><span class="lamp" aria-hidden="true"></span><span id="initLabel">Initialized</span></button>
+  <button id="estop" type="button" class="key estop-key" title="robot_emergency_stop: stops and latches; the arm needs Initialize afterwards">E-STOP<small>latches</small></button>
+  <button id="stop" type="button" class="key stop-key" aria-keyshortcuts="Escape">STOP<small>Esc</small></button>
+</header>
+
+<main class="desk">
+  <section class="monitor-bay" aria-label="3D view of the simulated arm">
+    <div class="bank">
+      <h2>Monitor</h2>
+      <dl class="legend">
+        <div><dt><span class="swatch reach" aria-hidden="true"></span></dt><dd>Reach, SDK limits</dd></div>
+        <div><dt><span class="swatch blind" aria-hidden="true"></span></dt><dd>Blind zone</dd></div>
+        <div><dt><span class="swatch goal" aria-hidden="true"></span></dt><dd>Goal</dd></div>
+      </dl>
+      <div class="bank-keys">
+        <div class="mode-keys" id="modelKeys" role="group" aria-label="Model drawn" hidden>
+          <button type="button" class="key small" data-mode="cad" aria-pressed="true">CAD</button>
+          <button type="button" class="key small" data-mode="primitives" aria-pressed="false">Primitives</button>
+        </div>
+        <button id="viewReset" type="button" class="key small" disabled>Reset view</button>
+      </div>
+    </div>
+    <div id="screen" class="screen">
+      <p class="watermark" aria-hidden="true">SIMULATED</p>
+      <p id="screenNote" class="screen-note">Starting the 3D view&hellip;</p>
+      <p id="blindTag" class="screen-tag blocked" role="alert" hidden>The J2 arm overlaps the column: Hitbot's blind zone. The SDK doesn't check this; the real arm would hit its column. Jog J2 toward 0&deg;, or J1 away from &plusmn;90&deg;, to clear it.</p>
+      <p class="screen-help">Floor grid: 10 and 100 mm, in the SDK's x and y. Drag to orbit, right-drag to pan, scroll to zoom.</p>
+    </div>
+  </section>
+
+  <div class="column">
+    <section class="section" aria-labelledby="hJoints">
+      <div class="bank">
+        <h2 id="hJoints">Joints</h2>
+        <div class="detent-banks">
+          <fieldset class="detents" id="stepDetents"><legend>Step <small>&deg; &middot; J3 mm</small></legend></fieldset>
+          <fieldset class="detents" id="speedDetents"><legend>Speed <small>&deg;/s &middot; J3 mm/s</small></legend></fieldset>
+        </div>
+      </div>
+      <div id="channels" class="channels"></div>
+      <p class="hint">One exact step per click, from the last goal; hold to repeat, up to <span id="leadSteps">3</span> steps ahead.</p>
+    </section>
+
+    <section class="section" aria-labelledby="hPose">
+      <div class="bank">
+        <h2 id="hPose">Pose</h2>
+        <p id="modelCheck" class="bank-note"></p>
+      </div>
+      <dl class="pose-windows">
+        <div><dt>X <small>mm</small></dt><dd id="poseX">&ndash;</dd></div>
+        <div><dt>Y <small>mm</small></dt><dd id="poseY">&ndash;</dd></div>
+        <div><dt>Z <small>mm</small></dt><dd id="poseZ">&ndash;</dd></div>
+        <div><dt>R <small>&deg;</small></dt><dd id="poseR">&ndash;</dd></div>
+        <div><dt title="J1 + J2 + R: the tool's rotation in the base frame (assumed)">YAW <small>&deg;</small></dt><dd id="toolYaw">&ndash;</dd></div>
+      </dl>
+      <p class="hint">x and y from the J1 axis; z is 0 at the top of travel, so the floor is at z <span id="floorZ"></span> mm.</p>
+    </section>
+
+    <section class="section" aria-labelledby="hMoveJoints">
+      <div class="bank"><h2 id="hMoveJoints">Move to joints</h2></div>
+      <div class="fields" id="jointFields"></div>
+      <div class="actions">
+        <button id="jointsFromState" type="button" class="key small">Use current</button>
+        <button id="moveJoints" type="button" class="key move-key">Move joints</button>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="hMovePose">
+      <div class="bank">
+        <h2 id="hMovePose">Move to pose</h2>
+        <fieldset class="detents" id="linearDetents"><legend>Linear speed <small>mm/s</small></legend></fieldset>
+      </div>
+      <div class="fields">
+        <label class="field"><span>X</span><input id="tx" type="number" step="0.1" inputmode="decimal"><span class="unit">mm</span></label>
+        <label class="field"><span>Y</span><input id="ty" type="number" step="0.1" inputmode="decimal"><span class="unit">mm</span></label>
+        <label class="field"><span>Z</span><input id="tz" type="number" step="0.1" inputmode="decimal"><span class="unit">mm</span></label>
+        <label class="field"><span>R</span><input id="tr" type="number" step="0.1" inputmode="decimal"><span class="unit">&deg;</span></label>
+      </div>
+      <label class="select-field"><span>Hand</span>
+        <select id="hand">
+          <option value="none">Keep hand &middot; movej_xyz</option>
+          <option value="keep">Keep hand &middot; movej_xyz_lr (lr 0)</option>
+          <option value="plus">lr +1 (J2 &ge; 0)</option>
+          <option value="minus">lr &minus;1 (J2 &le; 0)</option>
+        </select>
+      </label>
+      <div class="actions">
+        <button id="poseFromState" type="button" class="key small">Use current</button>
+        <button id="changeHand" type="button" class="key small" title="change_hand: the other elbow solution at the same position">Change hand</button>
+        <button id="movePose" type="button" class="key move-key" title="move_to_pose: joint-interpolated, at the joint speed">Move</button>
+        <button id="moveLinear" type="button" class="key move-key" title="move_linear: a straight line, at the linear speed">Move linear</button>
+      </div>
+      <p class="hint">Move uses Hand and the joint speed. Move linear keeps the current hand and uses the linear speed. The lr hands follow the simulator's convention; the real arm's is unverified.</p>
+    </section>
+
+    <section class="section" aria-labelledby="hLog">
+      <div class="bank"><h2 id="hLog">Messages</h2></div>
+      <ol id="log" class="log"></ol>
+    </section>
+  </div>
+</main>
+
+<footer class="message-line">
+  <p id="message" aria-live="polite">Messages from the simulator and the SDK appear here.</p>
+  <p class="standing">Esc stops the arm. SDK refusals are shown word for word.</p>
+</footer>
+</body>
+</html>

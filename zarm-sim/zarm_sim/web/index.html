@@ -1,8 +1,8 @@
 <!doctype html>
 <!--
-THESIS: The umbratek jog desk in rehearsal, cut to the Z-Arm's four channels: the 3D monitor is the subject, every control sits on the desk beside it, and a printed SIMULATED placard rides in the sticky bridge so nobody mistakes this for the arm. Refuses buttons floating over a viewport: the only things over the picture are the joints' own grab handles, a readout while one is dragged, and the plan bar docked along the bottom while a pose is staged.
+THESIS: The umbratek jog desk in rehearsal, cut to the Z-Arm's four channels: the 3D monitor is the subject, every control sits on the desk beside it, and a printed SIMULATED placard rides in the sticky bridge so nobody mistakes this for the arm. Refuses buttons floating over a viewport: the only things over the picture are the drag handles (the joints' rings and Z handle, or the tool's gizmo, by the Joints | Tool keys), a readout while one is dragged, and the plan bar docked along the bottom while a pose is staged.
 OWN-WORLD: Matte charcoal desk, well-black monitor and windows, charcoal key caps with a 2px travel edge. Colour is light that reports state: amber moving, dragged or planned, green live and ready, red stop, refusal, limit or blind zone. Scribble tapes name J1-J4, on their rows and on their handles in the monitor. One system sans, tabular figures, uppercase printed legends. SIMULATED is a paper placard in marker ink.
-STORY: The owner sees it is a simulation, reads where the arm is, drags a joint's ring or the Z handle to plan a pose (or jogs, or types a move), presses Move, and reads every SDK refusal in plain words.
+STORY: The owner sees it is a simulation, reads where the arm is, drags a joint's ring or the Z handle (or, in Tool mode, the gizmo at the tool) to plan a pose (or jogs, or types a move), presses Move, and reads every SDK refusal in plain words.
 FIRST VIEWPORT: Bridge: name and link lamp, placard, state window, Initialize, E-stop, STOP far right. Monitor left at full height, the Hitbot CAD arm with its handles; joints and pose right, the typed moves one scroll further down; message line pinned below.
 FORM: inherited world (umbratek-code DESIGN.md); precise brief, no seed.
 -->
@@ -48,6 +48,10 @@ FORM: inherited world (umbratek-code DESIGN.md); precise brief, no seed.
         <div><dt><span class="swatch goal" aria-hidden="true"></span></dt><dd>Plan or goal</dd></div>
       </dl>
       <div class="bank-keys">
+        <div class="mode-keys" role="group" aria-label="Dragging in the 3D view moves">
+          <button id="modeJoints" type="button" class="key small" aria-pressed="true" disabled>Joints</button>
+          <button id="modeTool" type="button" class="key small" aria-pressed="false" disabled>Tool</button>
+        </div>
         <button id="viewReset" type="button" class="key small" disabled>Reset view</button>
       </div>
     </div>
@@ -93,13 +97,13 @@ FORM: inherited world (umbratek-code DESIGN.md); precise brief, no seed.
         <p id="modelCheck" class="bank-note"></p>
       </div>
       <dl class="pose-windows">
-        <div><dt>X <small>mm</small></dt><dd id="poseX">&ndash;</dd></div>
-        <div><dt>Y <small>mm</small></dt><dd id="poseY">&ndash;</dd></div>
-        <div><dt>Z <small>mm</small></dt><dd id="poseZ">&ndash;</dd></div>
-        <div><dt>R <small>&deg;</small></dt><dd id="poseR">&ndash;</dd></div>
-        <div><dt title="J1 + J2 + R: the tool's rotation in the base frame (assumed)">YAW <small>&deg;</small></dt><dd id="toolYaw">&ndash;</dd></div>
+        <div><dt>X <small>mm</small></dt><dd id="poseX">&ndash;</dd><dd id="aimX" class="aim quiet">&nbsp;</dd></div>
+        <div><dt>Y <small>mm</small></dt><dd id="poseY">&ndash;</dd><dd id="aimY" class="aim quiet">&nbsp;</dd></div>
+        <div><dt>Z <small>mm</small></dt><dd id="poseZ">&ndash;</dd><dd id="aimZ" class="aim quiet">&nbsp;</dd></div>
+        <div><dt>R <small>&deg;</small></dt><dd id="poseR">&ndash;</dd><dd id="aimR" class="aim quiet">&nbsp;</dd></div>
+        <div><dt title="J1 + J2 + R: the tool's rotation in the base frame (assumed)">YAW <small>&deg;</small></dt><dd id="toolYaw">&ndash;</dd><dd id="aimYaw" class="aim quiet">&nbsp;</dd></div>
       </dl>
-      <p class="hint">x and y from the J1 axis; z is 0 at the top of travel, so the floor is at z <span id="floorZ"></span> mm.</p>
+      <p class="hint">x and y from the J1 axis; z is 0 at the top of travel, so the floor is at z <span id="floorZ"></span> mm. Under each, where a drag or the plan puts the tool.</p>
     </section>
 
     <section class="section" aria-labelledby="hMoveJoints">

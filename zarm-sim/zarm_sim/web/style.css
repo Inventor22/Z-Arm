@@ -201,7 +201,21 @@ button, input, select { font: inherit; color: inherit; }
 
 .bank { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .bank h2 { font-size: 14px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; margin-right: auto; }
-.bank-keys { display: flex; gap: 8px; }
+.bank-keys { display: flex; flex-wrap: wrap; gap: 8px; }
+/* What dragging in the 3D view moves: two interlocked keys, like a desk's source selector. The one in use stays
+   pressed in, its legend in Legend Ink; the other stands up, printed grey. */
+.mode-keys { display: flex; }
+.mode-keys .key { border-radius: 0; min-width: 58px; }
+.mode-keys .key:first-child { border-radius: 4px 0 0 4px; }
+.mode-keys .key:last-child { border-radius: 0 4px 4px 0; border-left-width: 0; }
+.mode-keys .key[aria-pressed="false"] { color: var(--ink-2); }
+.mode-keys .key[aria-pressed="true"] {
+  background: var(--well);
+  border-bottom-width: 1px;
+  transform: translateY(1px);
+  box-shadow: inset 0 2px 4px rgb(0 0 0 / 0.65);
+  cursor: default;
+}
 .detent-banks { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
 .bank-note { font-size: 13px; color: var(--ink-2); }
 .bank-note.bad { color: var(--alarm); }
@@ -469,6 +483,11 @@ button, input, select { font: inherit; color: inherit; }
 .pose-windows dt { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; color: var(--ink-2); }
 .pose-windows dt small { font-size: 11px; font-weight: 400; letter-spacing: 0; color: var(--ink-3); }
 .pose-windows dd { font-size: 18px; font-weight: 650; letter-spacing: -0.01em; white-space: nowrap; }
+/* Under each pose window: where a drag (amber), the plan (grey, "plan →") or the move under way puts the tool. */
+.pose-windows dd.aim { min-height: 17px; font-size: 12px; font-weight: 650; letter-spacing: 0; color: var(--amber); }
+.pose-windows dd.aim.quiet { color: var(--ink-3); }
+.pose-windows dd.aim.planned { color: var(--ink-2); }
+.pose-windows dd.aim.blocked { color: var(--alarm); }
 
 /* ---- Fields ---- */
 .fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 16px; }

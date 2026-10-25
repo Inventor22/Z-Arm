@@ -1,24 +1,29 @@
 // The 3D monitor: the arm built from the URDF the server serves, posed from the SDK's joint values and drawn with
 // Hitbot's CAD meshes when they've been made on this PC (with the URDF's primitive shapes when they haven't); the
-// floor's millimetre grid and the reach envelope in the SDK's own x and y; and an amber shadow arm for a planned
-// pose or the move under way. The J1, J2 and J4 rings and the Z handle (J3) are grab handles: dragging one plans
-// that joint, the page stages it, and nothing moves until Move. The dragging is umbratek-code's
-// (scripts/web/arm_view.js): handles picked by their drawn shape on screen, a capture-phase grab that keeps the
-// camera still, rings tracked around their plane (or along their on-screen tangent when seen edge-on), and the Z
-// handle along its axis (or by dragging up and down when seen end-on).
+// floor's millimetre grid and the reach envelope in the SDK's own x and y; and an amber shadow arm, with the tool's
+// path, for a planned pose or the move under way. In Joints mode the J1, J2 and J4 rings and the Z handle (J3) are
+// grab handles: dragging one plans that joint. In Tool mode a gizmo at the flange slides the tool along x, y or z or
+// turns its yaw, and the joints follow by inverse kinematics (kinematics.js). Either way the page stages the plan and
+// nothing moves until Move. The dragging is umbratek-code's (scripts/web/arm_view.js): handles picked by their drawn
+// shape on screen, a capture-phase grab that keeps the camera still, rings tracked around their plane (or along their
+// on-screen tangent when seen edge-on), and arrows and the Z handle along their line (or up and down when end-on).
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { createGizmo, GIZMO } from "./gizmo.js";
+import { solveTool, toolPath, toolPose } from "./kinematics.js";
 import { pathCheck } from "./plan.js";
 import { buildRobot, parseUrdf } from "./urdf.js";
 
 const RAD = Math.PI / 180;
 const COLOR = {
   well: 0x0e0f10, grid: 0x23262a, gridMain: 0x3d4248, amber: 0xf2aa3c, alarm: 0xff8073, reach: 0x8f8b83,
-  axisX: 0xff3352, axisY: 0x8bdc00, lit: 0xffffff,
+  axisX: 0xff3352, axisY: 0x8bdc00, axisZ: 0x2890ff, lit: 0xffffff,
 };
 const TAPES = {j1_shoulder: 0xe3ba4f, j2_elbow: 0x7fb3d9, j3_vertical: 0x92cc8a, j4_wrist: 0xe19769};
 const VIEW = {target: [0.22, 0.0, 0.17], position: [1.3, -1.28, 1.24]};  // the home view's direction, before it's fitted
-const FIT = {x: 0.9, y: 0.86};  // how much of the canvas (as a fraction of its half-width and half-height) the arm may fill
+// The home view frames the arm this many pixels inside the canvas's edges (the top clears the SIMULATED mark), and
+// above the help line or plan bar along the bottom.
+const INSET = {side: 14, top: 44, bottom: 14};
 const GRID_MM = {x0: -300, x1: 500, y0: -500, y1: 500};  // in the SDK frame
 const MM = 0.001;
 const LABEL_PX = 20;  // the floor labels' height on screen (their text is about 12 px), whatever the zoom
@@ -34,6 +39,9 @@ const RING_PX_PER_DEG = 2;  // side-on rings turn this many pixels of drag into 
 const SLIDE_MIN_PX = 24;  // a Z handle shorter than this on screen is seen end-on: it slides with up and down drags
 const SNAP = {deg: [0.5, 5], mm: [1, 10]};  // a plan's steps, and with Shift held
 const MIN_CHANGE = {deg: 0.25, mm: 0.5};  // a smaller drag is a click, not a plan
+const TOOL_SNAP = {move: [1, 10], turn: [0.5, 5]};  // the gizmo's steps: mm along an arrow or degrees of yaw; with Shift
+const GIZMO_PICK_PX = {mouse: 12, touch: 20};
+const BASE_AXES = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
 // Each handle is drawn twice: faintly over everything, so it stays in sight (and in reach) inside the CAD meshes,
 // then solid wherever nothing hides it. All of it is transparent, so renderOrder alone sets the order.
 const PASSES = [
@@ -62,15 +70,20 @@ function segmentGap(px, py, a, b) {
   return Math.hypot(a.x + ab.x * t - px, a.y + ab.y * t - py);
 }
 
-// onPreview(drag readout | null) follows a drag; onRelease({field, from, to, cancelled, changed}) ends it;
-// onHover(handle under the pointer | null) names a handle before it's grabbed. Positions are in page pixels.
-export async function createView(host, config, {onPreview = () => {}, onRelease = () => {}, onHover = () => {}, onLost} = {}) {
+// onPreview(drag readout | null) follows a drag; onRelease(...) ends it: {field, from, to, cancelled, changed} for a
+// joint handle, {kind: "tool", coord, amount, pose, limited, cancelled, changed} for the gizmo. onHover(handle under
+// the pointer | null) names a handle before it's grabbed. Positions are in page pixels. `mode` is what dragging in
+// the view moves: "joints" (the rings and the Z handle) or "tool" (the gizmo).
+export async function createView(host, config, {onPreview = () => {}, onRelease = () => {}, onHover = () => {}, onLost,
+                                                mode: startMode = "joints"} = {}) {
   const [urdfText, envelope] = await Promise.all([fetchOk(config.urdf, "text"), fetchOk(config.envelope, "json")]);
   const urdf = parseUrdf(urdfText);
   const [sx, sy, sz] = config.sdkOriginM;
   const fields = config.jointMap;  // the SDK's joints in its order (J1, J2, J3, J4), each with its URDF joint
   const limits = config.softLimits;  // the SDK's soft limits, by field
   const zone = config.blindZone || null;
+  const lengths = config.armLengthsMm;
+  let mode = startMode === "tool" ? "tool" : "joints";
 
   const renderer = new THREE.WebGLRenderer({antialias: true, powerPreference: "high-performance"});
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -388,6 +401,29 @@ export async function createView(host, config, {onPreview = () => {}, onRelease 
   addSlide();
   for (const handle of handles) handle.group.visible = false;  // until the first status
 
+  // ---- Tool mode: the gizmo at the shadow's flange (the SDK's pose point), drawn over everything ----
+  const gizmo = createGizmo(THREE, {axes: [COLOR.axisX, COLOR.axisY, COLOR.axisZ], well: COLOR.well, amber: COLOR.amber,
+                                    lit: COLOR.lit});
+  scene.add(gizmo.group);
+  const gizmoAt = new THREE.Vector3();  // where the gizmo sits: the shadow's tool0, in world coordinates
+
+  // The tool's path on the joint move to the plan (or the move under way): every joint turns in step, so the tool
+  // follows a curve, not a straight line. Drawn over the arm, amber, or red when the plan is blocked.
+  const pathLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({
+    color: COLOR.amber, transparent: true, opacity: 0.95, depthTest: false, depthWrite: false, fog: false,
+  }));
+  pathLine.renderOrder = 11;
+  pathLine.visible = false;
+  scene.add(pathLine);
+  function showPath(points, clear) {
+    pathLine.visible = Boolean(points);
+    if (!points) return;
+    pathLine.geometry.dispose();
+    pathLine.geometry = new THREE.BufferGeometry().setFromPoints(
+      points.map(([x, y, z]) => new THREE.Vector3(sx + x * MM, sy + y * MM, sz + z * MM)));
+    pathLine.material.color.setHex(clear ? COLOR.amber : COLOR.alarm);
+  }
+
   // Where the tool goes: a ring and a dashed drop line to the floor.
   const marker = new THREE.Group();
   const markerRing = new THREE.Mesh(new THREE.TorusGeometry(0.016, 0.0022, 10, 64), new THREE.MeshBasicMaterial({color: COLOR.amber}));
@@ -439,7 +475,8 @@ export async function createView(host, config, {onPreview = () => {}, onRelease 
   }
 
   // Poses the shadow arm, and the handles riding on it: a drag in progress, else the plan, else the goal of the move
-  // under way, else the arm itself. Only the links a changed joint moves are drawn; red when the plan is blocked.
+  // under way, else the arm itself. Only the links a changed joint moves are drawn; red when the plan is blocked. The
+  // gizmo sits at the shadow's flange, and the tool's path runs from the arm to the shadow.
   const toolPoint = new THREE.Vector3();
   function updateGhost() {
     if (!actual) return;
@@ -456,11 +493,20 @@ export async function createView(host, config, {onPreview = () => {}, onRelease 
     if (turned.size) showMarker(toolPoint.setFromMatrixPosition(shadow.groups.get("tool0").matrixWorld), blocked);
     else if (goalTool) showMarker(toolPoint.set(sx + goalTool.x_mm * MM, sy + goalTool.y_mm * MM, sz + goalTool.z_mm * MM), false);
     else marker.visible = false;
+    gizmoAt.setFromMatrixPosition(shadow.groups.get("tool0").matrixWorld);
+    gizmo.group.visible = mode === "tool";
+    showPath(turned.size ? toolPath(actual, pose, lengths) : null, !blocked);
     dirty = true;
   }
 
+  // The handles of the mode in use, once the arm's position is known: the rings and the Z handle, or the gizmo.
+  function showHandles() {
+    for (const handle of handles) handle.group.visible = Boolean(actual) && mode === "joints";
+    gizmo.group.visible = Boolean(actual) && mode === "tool";
+  }
+
   // Each handle in its tape colour, brightened under the pointer; the others dim while one is dragged, and all of
-  // them while the arm can't take a plan.
+  // them while the arm can't take a plan. The gizmo styles its own, in its axis colours.
   const white = new THREE.Color(COLOR.lit);
   function styleHandles() {
     for (const handle of handles) {
@@ -473,6 +519,7 @@ export async function createView(host, config, {onPreview = () => {}, onRelease 
       }
       handle.band.visible = active && (interactive || Boolean(drag));
     }
+    gizmo.style(hover && hover.kind === "gizmo" ? hover : null, drag && drag.kind === "tool" ? drag.handle : null, interactive);
     renderer.domElement.style.cursor = drag ? "grabbing" : hover && interactive ? "grab" : "";
     dirty = true;
   }
@@ -481,6 +528,8 @@ export async function createView(host, config, {onPreview = () => {}, onRelease 
   const raycaster = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
   const canvasRect = () => renderer.domElement.getBoundingClientRect();
+  const canvasSize = () => ({width: renderer.domElement.clientWidth || host.clientWidth,
+                             height: renderer.domElement.clientHeight || host.clientHeight});
   function aim(event, rect) {
     ndc.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
     raycaster.setFromCamera(ndc, camera);
@@ -493,6 +542,11 @@ export async function createView(host, config, {onPreview = () => {}, onRelease 
   const ringPoint = (handle, angle) => new THREE.Vector3(Math.cos(angle) * handle.radius, Math.sin(angle) * handle.radius, 0)
     .applyMatrix4(handle.group.matrixWorld);
   const slideEnds = (handle) => [-SLIDE.half, SLIDE.half].map((z) => new THREE.Vector3(0, 0, z).applyMatrix4(handle.group.matrixWorld));
+  // The gizmo's centre on screen (canvas pixels), sized for the camera as it is now.
+  function gizmoCentre(rect) {
+    gizmo.place(gizmoAt, camera, rect);
+    return gizmo.toScreen(new THREE.Vector3(), camera, rect) || new THREE.Vector2(rect.width / 2, rect.height / 2);
+  }
 
   // The handle whose drawn shape passes nearest the pointer on screen, within reach, and where on a ring it was
   // grabbed. Hidden parts count: the handles show through the arm, so they can be grabbed through it too.
@@ -501,6 +555,11 @@ export async function createView(host, config, {onPreview = () => {}, onRelease 
     const rect = canvasRect();
     const px = event.clientX - rect.left;
     const py = event.clientY - rect.top;
+    if (mode === "tool") {
+      if (!gizmo.group.visible) return null;
+      gizmo.place(gizmoAt, camera, rect);
+      return gizmo.pick(px, py, camera, rect, event.pointerType === "touch" ? GIZMO_PICK_PX.touch : GIZMO_PICK_PX.mouse);
+    }
     const reach = event.pointerType === "touch" ? PICK_PX.touch : PICK_PX.mouse;
     shadow.root.updateMatrixWorld(true);
     let best = null;
@@ -561,6 +620,10 @@ export async function createView(host, config, {onPreview = () => {}, onRelease 
 
   function startDrag(pick, event) {
     const handle = pick.handle;
+    if (handle.kind === "gizmo") {
+      startToolDrag(pick, event);
+      return;
+    }
     const rect = canvasRect();
     // The drag edits the plan (or the arm's pose when nothing is staged) one joint at a time.
     const base = {...(plan || actual)};
@@ -568,7 +631,7 @@ export async function createView(host, config, {onPreview = () => {}, onRelease 
     const center = centreOf(handle);
     const axis = new THREE.Vector3(0, 0, 1).transformDirection(handle.group.matrixWorld);
     drag = {
-      handle, field: handle.field, unit: handle.unit, pointerId: event.pointerId, rect, base, center,
+      kind: "joint", handle, field: handle.field, unit: handle.unit, pointerId: event.pointerId, rect, base, center,
       from: base[handle.field], actualFrom: actual[handle.field], to: base[handle.field], pose: base,
       check: planCheck, limited: false, x: event.clientX, y: event.clientY,
     };
@@ -610,6 +673,10 @@ export async function createView(host, config, {onPreview = () => {}, onRelease 
 
   function updateDrag(event) {
     const d = drag;
+    if (d.kind === "tool") {
+      updateToolDrag(event);
+      return;
+    }
     let raw;
     if (d.handle.kind === "ring") {
       if (d.planar) {
@@ -653,11 +720,126 @@ export async function createView(host, config, {onPreview = () => {}, onRelease 
                limited: d.limited, x: event.clientX, y: event.clientY, cx: d.cx, cy: d.cy});
   }
 
+  // ---- Gizmo drags: slide the tool along an arrow, or turn its yaw about Z while the flange stays put ----
+  // The pointer's angle about the yaw ring's centre, in the ring's (horizontal) plane.
+  function turnAngle(d) {
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(d.axis, d.center);
+    const hit = raycaster.ray.intersectPlane(plane, new THREE.Vector3());
+    if (!hit) return null;
+    hit.sub(d.center);
+    return Math.atan2(hit.y, hit.x);
+  }
+
+  function startToolDrag(pick, event) {
+    const handle = pick.handle;
+    const rect = canvasRect();
+    // The drag moves the tool from where the plan puts it (or the arm, when nothing is staged); the joints follow.
+    const base = {...(plan || actual)};
+    shadow.root.updateMatrixWorld(true);
+    gizmoAt.setFromMatrixPosition(shadow.groups.get("tool0").matrixWorld);
+    const centre = gizmoCentre(rect);
+    drag = {
+      kind: "tool", handle, type: handle.type, coord: handle.type === "turn" ? "yaw" : "xyz"[handle.axis],
+      pointerId: event.pointerId, rect, base, from: toolPose(base, lengths), center: gizmoAt.clone(),
+      axis: new THREE.Vector3(...BASE_AXES[handle.axis]), steps: 0, applied: 0, pose: base, reason: null,
+      check: pathCheck(zone, actual, base), x: event.clientX, y: event.clientY, total: 0, startAngle: pick.angle || 0,
+      metresPerPx: gizmo.metresPerPixel(), cx: rect.left + centre.x, cy: rect.top + centre.y,
+    };
+    aim(event, rect);
+    if (handle.type === "move") {
+      const along = alongAxis(drag);
+      const a = gizmo.toScreen(new THREE.Vector3(), camera, rect);
+      const b = gizmo.toScreen(drag.axis.clone().multiplyScalar(GIZMO.head[1]), camera, rect);
+      // Seen end-on, an arrow can't be followed along its line: slide it by dragging up and down instead.
+      drag.planar = along !== null && Boolean(a && b) && a.distanceTo(b) > SLIDE_MIN_PX;
+      drag.t0 = drag.planar ? along : 0;
+    } else {
+      drag.planar = Math.abs(raycaster.ray.direction.dot(drag.axis)) > RING_FACING_MIN;
+      if (drag.planar) {
+        drag.last = turnAngle(drag);
+        if (drag.last === null) drag.planar = false;
+        else drag.startAngle = drag.last;
+      }
+      if (!drag.planar) {
+        // Seen nearly edge-on: follow the ring's on-screen direction where it was grabbed, at a fixed rate.
+        const here = gizmo.toScreen(gizmo.ringLocal(drag.startAngle), camera, rect);
+        const ahead = gizmo.toScreen(gizmo.ringLocal(drag.startAngle + 0.05), camera, rect);
+        const along = here && ahead ? ahead.sub(here) : new THREE.Vector2(1, 0);
+        drag.tangent = along.length() > 0.05 ? along.normalize() : new THREE.Vector2(1, 0);
+        drag.pxPerRad = RING_PX_PER_DEG / RAD;
+      }
+    }
+    hover = null;
+    onHover(null);
+    styleHandles();
+    updateToolDrag(event);
+  }
+
+  // Follows the drag toward `wanted` (a whole number of `fine` steps from where it began) one step at a time from the
+  // last pose reached, and stops at the last one the arm can reach within its limits, saying why.
+  function followTool(d, wanted, fine) {
+    const direction = Math.sign(wanted - d.steps);
+    d.reason = null;
+    d.limitField = null;
+    for (let n = d.steps + direction; direction !== 0 && n !== wanted + direction; n += direction) {
+      const result = solveTool(d.base, d.coord, n * fine, lengths, limits);
+      if (!result.ok) {
+        d.reason = result.reason;
+        d.limitField = result.field;
+        break;
+      }
+      d.steps = n;
+      d.pose = result.joints;
+    }
+    d.applied = d.steps * fine;
+  }
+
+  function updateToolDrag(event) {
+    const d = drag;
+    aim(event, d.rect);
+    let raw;
+    if (d.type === "move") {
+      const along = d.planar ? alongAxis(d) : null;
+      raw = along !== null ? (along - d.t0) * 1000 : d.planar ? d.lastRaw || 0 : (d.y - event.clientY) * d.metresPerPx * 1000;
+      d.lastRaw = raw;
+    } else {
+      if (d.planar) {
+        const angle = turnAngle(d);
+        if (angle !== null) {
+          d.total += wrap(angle - d.last);
+          d.last = angle;
+        }
+      } else {
+        d.total = ((event.clientX - d.x) * d.tangent.x + (event.clientY - d.y) * d.tangent.y) / d.pxPerRad;
+      }
+      raw = d.total / RAD;
+    }
+    const [fine, coarse] = TOOL_SNAP[d.type];
+    const snap = event.shiftKey ? coarse : fine;
+    followTool(d, Math.round((Math.round(raw / snap) * snap) / fine), fine);
+    d.check = pathCheck(zone, actual, d.pose);
+    updateGhost();
+    const centre = gizmoCentre(d.rect);
+    if (d.type === "turn") gizmo.showTurn(d.startAngle, d.applied * RAD, d.check.clear && !d.reason ? COLOR.amber : COLOR.alarm);
+    // The page's readout sits just outside the gizmo, toward the pointer, so it never covers a handle or a letter.
+    const toward = new THREE.Vector2(event.clientX - d.rect.left - centre.x, event.clientY - d.rect.top - centre.y);
+    if (toward.length() < 1) toward.set(1, 0);
+    toward.normalize().multiplyScalar(GIZMO.label + 12);
+    onPreview({
+      kind: "tool", type: d.type, coord: d.coord, name: d.handle.name, pose: {...d.pose},
+      from: d.coord === "yaw" ? d.from.yaw_deg : d.from[`${d.coord}_mm`], amount: d.applied,
+      clear: d.check.clear, reason: d.check.reason, limited: d.reason, limitField: d.limitField,
+      x: d.rect.left + centre.x + toward.x, y: d.rect.top + centre.y + toward.y,
+      cx: d.rect.left + centre.x, cy: d.rect.top + centre.y,
+    });
+  }
+
   function endDrag(cancelled) {
     const done = drag;
     drag = null;
     controls.enabled = true;
-    if (done.handle.sweep) done.handle.sweep.visible = false;
+    if (done.kind === "tool") gizmo.hideTurn();
+    else if (done.handle.sweep) done.handle.sweep.visible = false;
     try {
       if (renderer.domElement.hasPointerCapture(done.pointerId)) renderer.domElement.releasePointerCapture(done.pointerId);
     } catch {
@@ -666,6 +848,12 @@ export async function createView(host, config, {onPreview = () => {}, onRelease 
     styleHandles();
     updateGhost();
     onPreview(null);
+    if (done.kind === "tool") {
+      onRelease({kind: "tool", type: done.type, coord: done.coord, name: done.handle.name, amount: done.applied,
+                 from: done.coord === "yaw" ? done.from.yaw_deg : done.from[`${done.coord}_mm`], pose: {...done.pose},
+                 limited: done.reason, cancelled, changed: !cancelled && done.steps !== 0});
+      return;
+    }
     onRelease({field: done.field, from: done.actualFrom, to: done.to, cancelled,
                changed: !cancelled && Math.abs(done.to - done.from) >= MIN_CHANGE[done.unit]});
   }
@@ -681,6 +869,14 @@ export async function createView(host, config, {onPreview = () => {}, onRelease 
       return;
     }
     const rect = canvasRect();
+    if (handle.kind === "gizmo") {
+      const centre = gizmoCentre(rect);
+      const at = toolPose(plan || actual, lengths);
+      const coord = handle.type === "turn" ? "yaw" : "xyz"[handle.axis];
+      onHover({kind: "tool", type: handle.type, coord, name: handle.name, from: coord === "yaw" ? at.yaw_deg : at[`${coord}_mm`],
+               x: event.clientX, y: event.clientY, cx: rect.left + centre.x, cy: rect.top + centre.y});
+      return;
+    }
     const middle = toPixel(centreOf(handle), rect);
     onHover({field: handle.field, x: event.clientX, y: event.clientY,
              cx: rect.left + (middle ? middle.x : 0), cy: rect.top + (middle ? middle.y : 0)});
@@ -717,44 +913,126 @@ export async function createView(host, config, {onPreview = () => {}, onRelease 
 
   // ---- Rendering ----
   // The home view looks along VIEW's direction from just far enough away to show the whole arm, base plate to column
-  // top, at the canvas's aspect (a tall side panel or a wide desk alike). It refits as the canvas resizes until the
-  // camera is moved; Reset view fits it again.
+  // top, at the canvas's shape (a tall side panel or a wide desk alike), within INSET of its edges and above the
+  // help line or plan bar. In Tool mode it leaves room for the gizmo around the flange. It refits as the canvas
+  // resizes until the camera is moved; Reset view fits it again.
   const homeDirection = new THREE.Vector3(...VIEW.position).sub(new THREE.Vector3(...VIEW.target)).normalize();
   let homed = true;
   controls.addEventListener("start", () => { homed = false; });
-  function fitView() {
-    robot.root.updateMatrixWorld(true);
-    const box = new THREE.Box3().setFromObject(robot.root);
-    if (box.isEmpty()) return;
-    const centre = box.getCenter(new THREE.Vector3());
-    const corners = [];
-    for (const x of [box.min.x, box.max.x]) {
-      for (const y of [box.min.y, box.max.y]) {
-        for (const z of [box.min.z, box.max.z]) corners.push(new THREE.Vector3(x, y, z));
-      }
+  // The window (in normalised device coordinates) the arm is framed within.
+  function frameWindow() {
+    const width = Math.max(1, host.clientWidth);
+    const height = Math.max(1, host.clientHeight);
+    const foot = host.querySelector(".screen-foot");
+    const footSpace = foot && foot.offsetHeight ? foot.offsetHeight + 10 + 8 : 0;  // docked 10 px up, and a little air
+    const bottom = Math.min(Math.max(INSET.bottom, footSpace), height * 0.35);
+    return {left: -1 + (2 * INSET.side) / width, right: 1 - (2 * INSET.side) / width,
+            bottom: -1 + (2 * bottom) / height, top: 1 - (2 * INSET.top) / height};
+  }
+  // A thinned sample of the drawn arm's vertices in world space, taken with the arm at both ends of its Z travel: the
+  // framing fits the arm's real shape, not its box, and stays the same whatever J3 is.
+  const zJoint = robot.movers.get(fields.find((f) => f.field === "j3_mm")?.joint);
+  function framePoints() {
+    const points = [];
+    const held = zJoint ? zJoint.mover.position.clone() : null;
+    for (const end of zJoint && limits.j3_mm ? limits.j3_mm : [null]) {
+      if (end !== null) robot.setJoints(toModel({j3_mm: end}));
+      robot.root.updateMatrixWorld(true);
+      robot.root.traverse((node) => {
+        if (!node.isMesh || !node.visible || !node.geometry.attributes.position) return;
+        const position = node.geometry.attributes.position;
+        const stride = Math.max(1, Math.floor(position.count / 1500));
+        for (let i = 0; i < position.count; i += stride) {
+          points.push(new THREE.Vector3().fromBufferAttribute(position, i).applyMatrix4(node.matrixWorld));
+        }
+      });
     }
-    const fits = (distance) => {
+    if (held) {
+      zJoint.mover.position.copy(held);
+      robot.root.updateMatrixWorld(true);
+    }
+    return points;
+  }
+  function fitView() {
+    const points = framePoints();
+    if (!points.length) return;
+    const area = frameWindow();
+    const width = Math.max(1, host.clientWidth);
+    const height = Math.max(1, host.clientHeight);
+    // In Tool mode, room for the gizmo around the flange: it's a fixed size on screen, so its margin is in pixels,
+    // and never more than 45% of the area, so the fit always settles.
+    const flange = mode === "tool" && actual ? gizmoAt.clone() : null;
+    const margin = [Math.min((2 * GIZMO.reach) / width, 0.45 * (area.right - area.left)),
+                    Math.min((2 * GIZMO.reach) / height, 0.45 * (area.top - area.bottom))];
+    const centre = new THREE.Box3().setFromPoints(points).getCenter(new THREE.Vector3());
+    let distance = 2.5;
+    const p = new THREE.Vector3();
+    const right = new THREE.Vector3();
+    const up = new THREE.Vector3();
+    for (let k = 0; k < 12; k += 1) {
       camera.position.copy(centre).addScaledVector(homeDirection, distance);
       camera.lookAt(centre);
       camera.updateMatrixWorld(true);
-      return corners.every((corner) => {
-        const p = corner.clone().project(camera);
-        return p.z < 1 && Math.abs(p.x) <= FIT.x && Math.abs(p.y) <= FIT.y;
-      });
-    };
-    let near = 0.05;
-    let far = 20;
-    for (let k = 0; k < 40; k += 1) {
-      const middle = (near + far) / 2;
-      if (fits(middle)) far = middle;
-      else near = middle;
+      let [x0, x1, y0, y1] = [Infinity, -Infinity, Infinity, -Infinity];
+      for (const point of points) {
+        p.copy(point).project(camera);
+        x0 = Math.min(x0, p.x);
+        x1 = Math.max(x1, p.x);
+        y0 = Math.min(y0, p.y);
+        y1 = Math.max(y1, p.y);
+      }
+      if (flange) {
+        p.copy(flange).project(camera);
+        x0 = Math.min(x0, p.x - margin[0]);
+        x1 = Math.max(x1, p.x + margin[0]);
+        y0 = Math.min(y0, p.y - margin[1]);
+        y1 = Math.max(y1, p.y + margin[1]);
+      }
+      // Slide the view so the picture sits in the middle of the area, then zoom so it fills it.
+      const halfHeight = distance * Math.tan((camera.fov * RAD) / 2);
+      right.setFromMatrixColumn(camera.matrixWorld, 0);
+      up.setFromMatrixColumn(camera.matrixWorld, 1);
+      centre.addScaledVector(right, ((x0 + x1 - area.left - area.right) / 2) * halfHeight * camera.aspect)
+        .addScaledVector(up, ((y0 + y1 - area.bottom - area.top) / 2) * halfHeight);
+      const scale = Math.max((x1 - x0) / (area.right - area.left), (y1 - y0) / (area.top - area.bottom));
+      distance = Math.max(0.3, distance * scale);
     }
-    fits(far);
     controls.target.copy(centre);
+    camera.position.copy(centre).addScaledVector(homeDirection, distance);
     controls.update();
     homed = true;
     dirty = true;
   }
+
+  // In Tool mode, keep the gizmo whole on screen and clear of the plan bar: when a new plan, or the bar appearing or
+  // growing, leaves its arrows near an edge or under the bar, re-frame (unless the camera has been moved, or a drag is
+  // on). It's checked on the next frame, once the page has laid the bar out.
+  function gizmoCrowded() {
+    if (!gizmo.group.visible) return false;
+    const rect = canvasRect();
+    gizmo.place(gizmoAt, camera, rect);
+    const centre = gizmo.toScreen(new THREE.Vector3(), camera, rect);
+    if (!centre) return true;
+    const room = GIZMO.head[1] + 10;  // the arrow tips, and a little air
+    if (Math.min(centre.x, centre.y, rect.width - centre.x, rect.height - centre.y) < room) return true;
+    const bar = host.querySelector(".plan");
+    if (!bar || bar.hidden) return false;
+    const box = bar.getBoundingClientRect();
+    const x = rect.left + centre.x;
+    const y = rect.top + centre.y;
+    return Math.hypot(x - Math.max(box.left, Math.min(x, box.right)), y - Math.max(box.top, Math.min(y, box.bottom))) < room;
+  }
+  let clearCheck = 0;
+  function keepGizmoClear() {
+    if (clearCheck) return;
+    clearCheck = requestAnimationFrame(() => {
+      clearCheck = 0;
+      if (mode === "tool" && homed && !drag && gizmoCrowded()) fitView();
+    });
+  }
+  const planBar = host.querySelector(".plan");
+  if (planBar) new ResizeObserver(() => keepGizmoClear()).observe(planBar);
+
   controls.addEventListener("change", () => { dirty = true; });
   const resize = () => {
     const width = Math.max(1, host.clientWidth);
@@ -763,7 +1041,7 @@ export async function createView(host, config, {onPreview = () => {}, onRelease 
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
     sizeLabels(width, height);
-    if (homed) fitView();
+    if (homed && !drag) fitView();  // never re-frame under a drag
     dirty = true;
   };
   new ResizeObserver(resize).observe(host);
@@ -779,6 +1057,7 @@ export async function createView(host, config, {onPreview = () => {}, onRelease 
     requestAnimationFrame(frame);
     if (dirty) {
       dirty = false;
+      if (gizmo.group.visible) gizmo.place(gizmoAt, camera, canvasSize());
       renderer.render(scene, camera);
     }
   };
@@ -810,11 +1089,12 @@ export async function createView(host, config, {onPreview = () => {}, onRelease 
         material.emissiveIntensity = hit ? 0.55 : 0;
       }
       if (first) {
-        for (const handle of handles) handle.group.visible = true;
+        showHandles();
         styleHandles();
       }
       refreshPlan();  // the arm moved under the plan: check its path again
       updateGhost();
+      if (first && homed && !drag) fitView();  // frame the arm as it stands, with room for the gizmo in Tool mode
     },
     // The page's plan: SDK values by field, null for joints that follow the arm, or null for no plan. Returns whether
     // the straight joint move from the arm to it keeps the J2 arm out of the column, and if not, why.
@@ -825,8 +1105,39 @@ export async function createView(host, config, {onPreview = () => {}, onRelease 
         staged = next ? {...next} : null;
         refreshPlan();
         updateGhost();
+        keepGizmoClear();  // a new plan moves the gizmo with the shadow's flange
       }
       return planCheck;
+    },
+    // What dragging in the view moves: "joints" (the rings and the Z handle) or "tool" (the gizmo at the flange). A
+    // drag under way is cancelled; the plan stays, so the two can be mixed.
+    setMode(next) {
+      const wanted = next === "tool" ? "tool" : "joints";
+      if (wanted === mode) return;
+      if (drag) endDrag(true);
+      mode = wanted;
+      if (hover) {
+        hover = null;
+        onHover(null);
+      }
+      showHandles();
+      updateGhost();
+      if (homed) fitView();  // make room for the gizmo, or take it back
+      styleHandles();
+    },
+    currentMode: () => mode,
+    // How many points the drawn tool path has (0 when none is drawn), for automated checks.
+    pathPoints: () => (pathLine.visible && pathLine.geometry.attributes.position ? pathLine.geometry.attributes.position.count : 0),
+    // Page positions of a gizmo handle (used by automated checks): partway along an arrow and its tip ("move", axis 0,
+    // 1 or 2 for X, Y or Z), or a point on the yaw ring ("turn"); and the gizmo's centre. Null when it isn't shown.
+    gizmoPoint(type, axis = 2) {
+      if (!actual || !gizmo.group.visible) return null;
+      const rect = canvasRect();
+      gizmo.place(gizmoAt, camera, rect);
+      const points = gizmo.points(type, axis, camera, rect);
+      if (!points) return null;
+      const page = (p) => p && {x: rect.left + p.x, y: rect.top + p.y};
+      return {...page(points.point), tip: page(points.tip), cx: rect.left + points.centre.x, cy: rect.top + points.centre.y};
     },
     // Whether new drags may start. A drag under way carries on; the page cancels it when the arm can't take a plan.
     setInteractive(on) {

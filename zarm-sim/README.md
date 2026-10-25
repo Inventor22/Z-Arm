@@ -30,17 +30,19 @@ What's on the page:
   the meshes. The floor carries a millimetre grid (10 and 100 mm lines, labelled in the SDK's own x and y), the
   SDK's +x and +y axes at the J1 axis, the **reach envelope** for the SDK's soft limits (outlined) and Hitbot's
   **blind zone** (hatched red: positions the joint limits allow only with the J2 arm inside the column). An amber
-  shadow arm and a ring with a drop line show a planned pose or a running move's goal. Rings on J1, J2 and J4 and a
-  double arrow on the carriage for J3, in the joint strips' colours, are grab handles (below); the double arrow
-  rides a green rail on the column that spans the J1 housing's travel, with a stop at each end. The view opens
-  framing the whole arm, base plate to column top, at whatever shape the panel is, and Reset view frames it again.
-  Drag anywhere else to orbit, right-drag to pan, scroll to zoom.
+  shadow arm and a ring with a drop line show a planned pose or a running move's goal. For a plan or a joint move,
+  an amber curve shows the tool's path there. **Joints | Tool**, above the view, picks the grab handles (below).
+  Joints has rings on J1, J2 and J4 and a double arrow on the carriage for J3, in the joint strips' colours. The
+  double arrow rides a green rail on the column that spans the J1 housing's travel, with a stop at each end. Tool
+  has a gizmo at the flange. The view opens framing the whole arm, base plate to column top, at whatever shape the
+  panel is and wherever J3 is. Reset view frames it again. Drag anywhere else to orbit, right-drag to pan, scroll to
+  zoom.
 * **The bridge**: link lamp, the state window (READY, MOVING, NEEDS INIT, NO LINK), Initialize, E-STOP and STOP.
   Esc presses STOP from anywhere on the page, except during a drag, when it cancels the drag.
 * **Joints**: per-joint jog keys with step and speed detents, the position (J1, J2, J4 in degrees, J3 in mm), the
   goal while moving, and a meter across each joint's soft-limit range.
 * **Pose**: x, y, z, r from the SDK, the tool's yaw (J1 + J2 + r), and a check that the model's forward
-  kinematics agree with the SDK's pose.
+  kinematics agree with the SDK's pose. Under each value is where a drag (→) or the plan (plan →) puts the tool.
 * **Move to joints**, **Move to pose** (joint-interpolated, with hand selection: the current hand, or lr +1, -1 or 0
   through `movej_xyz_lr`), **Move linear**, and **Change hand**.
 * **Messages**: every command's result; the SDK's refusals word for word, such as
@@ -51,15 +53,30 @@ Planning a pose in the 3D view, as in umbratek-code's jog panel: **drag, then Mo
 * Point at a ring or the Z handle: it lights up, the pointer becomes a hand and a tag names the joint. Drag a ring
   around, or the Z handle up and down the column, to plan that joint (0.5° or 1 mm steps; hold Shift for 5° or
   10 mm). The shadow arm and the joint's row show the plan as you drag; the arm doesn't move.
-* Plan as many joints as you like, one drag each; the plan bar under the view lists them. **Move** sends them all
-  as one joint move (the joints you didn't plan stay where they are) at the speed detent; **Clear**, or a joint's
-  ×, drops them. The plan clears once the move starts.
+* **Tool** mode is umbratek-code's end-effector manipulator, made for a SCARA. A gizmo at the flange (the SDK's
+  pose point) stays the same size on screen. It has X (red), Y (green) and Z (blue) arrows along the SDK's axes and
+  one ring that turns the tool's yaw about Z with the flange staying put. There's no roll or pitch, since a SCARA
+  can't make them. Drag an arrow to slide the tool (1 mm steps, 10 with Shift) or the ring to turn it (0.5°, 5°
+  with Shift).
+  * The joints follow by closed-form inverse kinematics (`kinematics.js`, a port of `zarm.kinematics`). The arm
+    keeps its current elbow (J2's sign) and holds the tool's yaw, so J4 = yaw − J1 − J2. Z is J3, and the ring
+    turns J4 alone.
+  * Out of reach (more than 420 mm from the J1 axis, or too close to it) or past a soft limit, the drag stops at
+    the last pose it can reach and says why in red. The soft limits are J1's, J2's, J3's −310 to 0 mm, and J4's
+    while it holds the yaw.
+  * When a new plan leaves the gizmo at the screen's edge or under the plan bar, the view re-frames, unless you've
+    moved the camera.
+  * The page remembers the mode.
+* Plan as many joints as you like, with rings and the gizmo mixed. A ring drag stages its joint and a gizmo drag
+  every joint it changed; the plan bar under the view lists them. **Move** sends them all as one joint move (the
+  joints you didn't plan stay where they are) at the speed detent, so the tool follows the drawn curve, not a
+  straight line. **Clear**, or a joint's ×, drops them. The plan clears once the move starts.
 * A drag stops at the SDK's soft limits and says so in red. A plan whose path would run the J2 arm into the column
   (the blind zone) turns red, shadow included, and Move refuses it. If the simulated arm is already in the blind
   zone, any plan that doesn't take it further in is allowed, so you can get out.
 * Esc during a drag cancels it. STOP and E-STOP cancel a drag too; they leave a staged plan in place but drop one
-  already sent, since the arm stops short of it. Mouse, touch and pen all work. The handles draw on top of the arm,
-  so they can be grabbed through it.
+  already sent, since the arm stops short of it. Mouse, touch and pen all work. The handles and the gizmo draw on
+  top of the arm, so they can be grabbed through it.
 
 How it behaves, following umbratek-code's jog panel:
 
@@ -279,8 +296,10 @@ reach envelope and blind zone against the SDK's inverse kinematics, three.js's c
 checks, and the
 HTTP API on an ephemeral port (exact jogs, queueing, SDK refusals, Stop, E-stop and Initialize, the Host and token
 checks, the page-quiet stop, and that only the simulated backend is accepted). The MuJoCo tests run when `mujoco` is
-installed and skip otherwise. When `node` is on the PATH, the JavaScript is syntax-checked and the page's blind-zone
-plan checks (`plan.js`) are held to `workspace.py`'s numbers.
+installed and skip otherwise. When `node` is on the PATH, the JavaScript is syntax-checked, the page's blind-zone
+plan checks (`plan.js`) are held to `workspace.py`'s numbers, and the page's kinematics (`kinematics.js`) are held
+to `zarm.kinematics`: forward and inverse kinematics, the tool pose, the gizmo's solver and where it stops, and the
+sampled tool path.
 
 ## Files
 
@@ -295,7 +314,7 @@ plan checks (`plan.js`) are held to `workspace.py`'s numbers.
 | `zarm_sim/server.py` | The simulator view's server |
 | `zarm_sim/sdk.py` | Finds zarm-sdk; refuses anything but its simulated backend |
 | `zarm_sim/three_js.py`, `zarm_sim/meshes.py` | three.js's checked download; the optional mesh cache |
-| `zarm_sim/web/` | The page: `index.html`, `style.css`, `app.js` (controls, plan), `view.js` (3D, grab handles), `urdf.js`, `plan.js` (blind-zone checks) |
+| `zarm_sim/web/` | The page: `index.html`, `style.css`, `app.js` (controls, plan), `view.js` (3D, grab handles), `gizmo.js` (Tool mode's gizmo), `kinematics.js` (the SDK's kinematics, for the gizmo), `urdf.js`, `plan.js` (blind-zone checks) |
 | `models/` | The generated URDF and MJCF |
 | `scripts/fetch_cad_meshes.py` | Opt-in: meshes from Hitbot's CAD |
 | `tests/` | The tests |
@@ -313,6 +332,9 @@ state, amber for motion, green for ready, red for stop and refusals; tape colour
 * **The blind zone** is a plan-view check of the J2 arm against the column, in the view only: Move refuses plans
   that cross it, but the jog keys, the move forms and the SDK don't check it, and a tool hanging below the flange
   isn't included.
+* **Tool mode** plans joint moves, as umbratek-code's does, so the tool follows the drawn curve, not a straight line
+  (Move linear makes straight lines). It keeps the elbow it starts on (Change hand swaps it), and has no roll or
+  pitch.
 * **Jogs** while a step is under way are sent as one move when it ends, so fast clicking moves in short bursts. The
   page-quiet stop also stops moves when a background tab's timers are throttled for over 3 s.
 * **Dynamics** (masses, inertias, MuJoCo gains, limits) are estimates.

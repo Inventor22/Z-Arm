@@ -1,6 +1,9 @@
 // The simulator desk: polls the server's status about 30 times a second, sends commands with the page's token, and
 // hands the arm's state to the 3D monitor (view.js), loaded only when three.js and WebGL are both available.
-// Dragging a ring or the Z handle in the monitor stages a plan; nothing moves until the plan bar's Move sends it.
+// Dragging in the monitor stages a plan, a joint at a time (Joints mode: the rings and the Z handle) or by moving the
+// tool (Tool mode: the gizmo, the joints following); nothing moves until the plan bar's Move sends it.
+import { toolPose } from "./kinematics.js";
+
 const CONFIG = JSON.parse(document.getElementById("zarm-config").textContent);
 const $ = (id) => document.getElementById(id);
 const MINUS = "\u2212";
@@ -13,7 +16,18 @@ const JOINTS = [
 const JOINT = Object.fromEntries(JOINTS.map((joint) => [joint.field, joint]));
 const FRESH_MS = 1000;
 const PLAN_MIN = {j1_deg: 0.25, j2_deg: 0.25, j3_mm: 0.5, j4_deg: 0.25};  // a joint this close to the arm isn't planned
+const TOOL_STAGE_MIN = 0.001;  // a gizmo drag stages every joint it moves by more than this (deg or mm)
 const HANDOVER_MS = 1500;  // a sent plan gives way to the move's goal when the status shows it, or after this long
+// The pose windows: the SDK's pose and the tool's yaw, and where a drag, the plan or the move under way puts them.
+const POSE_WINDOWS = [["x_mm", "poseX", "aimX"], ["y_mm", "poseY", "aimY"], ["z_mm", "poseZ", "aimZ"],
+                      ["r_deg", "poseR", "aimR"], ["yaw_deg", "toolYaw", "aimYaw"]];
+const DRAG_MODE_KEY = "zarmSimDragMode";  // remembered on this PC, as umbratek-code's jog panel does
+const HELP = {
+  joints: "Drag a ring or the Z handle to plan a pose, then press Move. Drag elsewhere to orbit, right-drag to pan, "
+    + "scroll to zoom. Grid lines every 10 and 100 mm.",
+  tool: "Drag an arrow to slide the tool, or the ring to turn it; the joints follow, and nothing moves until you press "
+    + "Move. Shift snaps to 10 mm or 5\u00b0. Drag elsewhere to orbit, right-drag to pan, scroll to zoom.",
+};
 
 let status = null;
 let view = null;
@@ -28,6 +42,12 @@ let polling = false;
 let pollSoon = false;
 let pollTimer = null;
 // Planning in the 3D view.
+let dragMode = "joints";  // what dragging in the 3D view moves: "joints" (the rings and the Z handle) or "tool" (the gizmo)
+try {
+  if (localStorage.getItem(DRAG_MODE_KEY) === "tool") dragMode = "tool";
+} catch {
+  // storage is off (a private window): start in Joints mode
+}
 let plan = null;  // staged targets by SDK field (deg, or mm for J3); a joint left out follows the arm
 let preview = null;  // the drag under way, from the 3D view
 let planCheck = {clear: true, reason: null};
@@ -231,19 +251,25 @@ async function movePlan() {
 // The 3D view's callbacks.
 function onPreview(p) {
   preview = p;
-  showTag(p && {...p, kind: "drag"});
+  showTag(p && {...p, kind: p.kind === "tool" ? "tool" : "drag"});
   render();
 }
 
 function onHover(p) {
-  if (!preview) showTag(p && {...p, kind: "hover"});
+  if (!preview) showTag(p && {...p, kind: p.kind === "tool" ? "toolHover" : "hover"});
 }
+
+const signed = (value, digits) => `${value < 0 ? MINUS : "+"}${Math.abs(value).toFixed(digits)}`;
+const asClause = (reason) => (/^[A-Z][a-z]/.test(reason) ? reason[0].toLowerCase() + reason.slice(1) : reason);
 
 function onRelease(d) {
   preview = null;
   showTag(null);
   if (d.cancelled) {
     say("Drag cancelled. The plan is unchanged.", "ok");
+  } else if (d.kind === "tool") {
+    if (d.changed) stageTool(d);
+    else if (d.limited) say(`The tool can't go that way: ${asClause(d.limited)}.`);
   } else if (d.changed) {
     plan = withJoint(plan, d.field, d.to);
     const joint = JOINT[d.field];
@@ -256,15 +282,50 @@ function onRelease(d) {
   render();
 }
 
-// The readout beside the pointer: a handle's name before it's grabbed, then where the drag takes the joint.
+// A gizmo drag ended: the joint values solved for it become the plan, every joint that moves.
+function stageTool(d) {
+  const actual = status?.joints;
+  if (!actual) return;
+  const next = {};
+  for (const {field} of JOINTS) next[field] = Math.abs(d.pose[field] - actual[field]) > TOOL_STAGE_MIN ? d.pose[field] : null;
+  plan = stagedFields(next).length ? next : null;
+  if (!plan) {
+    say("The tool is back where the arm is, so there's no plan.", "ok");
+    return;
+  }
+  const how = d.coord === "yaw" ? `${signed(d.amount, 1)}\u00b0 of yaw` : `${signed(d.amount, 0)} mm along ${d.name}`;
+  const names = listOf(stagedFields(plan).map((field) => `J${JOINT[field].n}`));
+  const stopped = d.limited ? ` It stopped there: ${asClause(d.limited)}.` : "";
+  say(`Tool planned ${how}, moving ${names}.${stopped} Press Move to go there, or Clear.`, "ok");
+}
+
+// The readout beside the pointer: a handle's name before it's grabbed, then where the drag takes the joint, or the
+// tool.
 function showTag(p) {
   const tag = $("dragTag");
   if (!p) {
     tag.hidden = true;
     return;
   }
-  const joint = JOINT[p.field];
   tag.hidden = false;
+  if (p.kind === "toolHover" || p.kind === "tool") {
+    const unit = p.coord === "yaw" ? "\u00b0" : " mm";
+    if (p.kind === "toolHover") {
+      tag.dataset.tone = "hover";
+      tag.replaceChildren(`${p.name}  `, el("span", "now", `${fmt(p.from, 1)}${unit}`),
+        el("span", "how", p.coord === "yaw" ? "Drag around the ring to turn the tool" : "Drag along the arrow to move the tool"));
+    } else {
+      const blocked = !p.clear || Boolean(p.limited);
+      const how = !p.clear ? `Blocked: ${p.reason}` : p.limited ? `${p.limited}, so it stops here`
+        : "Release to plan \u00b7 Esc cancels";
+      tag.dataset.tone = blocked ? "blocked" : "ok";
+      tag.replaceChildren(`${p.name}  ${fmt(p.from, 1)}${unit} `, el("span", "to", `\u2192 ${fmt(p.from + p.amount, 1)}${unit}`),
+        el("span", "how", how));
+    }
+    placeTag(tag, p);
+    return;
+  }
+  const joint = JOINT[p.field];
   if (p.kind === "hover") {
     const now = status?.joints?.[p.field];
     tag.dataset.tone = "hover";
@@ -282,8 +343,9 @@ function showTag(p) {
   placeTag(tag, p);
 }
 
-// Sets the readout outward from the handle's centre (cx, cy), past the pointer (x, y), on the pointer's side, and
-// keeps it on screen.
+// Sets the readout outward from the handle's centre (cx, cy), past (x, y), on that side, and keeps it on screen. For
+// the gizmo, when that side has no room, it goes above or below instead, clear of the gizmo, so it never covers the
+// handle being dragged.
 function placeTag(tag, p) {
   const rect = $("screen").getBoundingClientRect();
   const width = tag.offsetWidth;
@@ -295,6 +357,19 @@ function placeTag(tag, p) {
   dy /= reach;
   const x = p.x - rect.left + dx * 34;
   const y = p.y - rect.top + dy * 34;
+  const tool = p.kind === "tool" || p.kind === "toolHover";
+  const fits = {right: x + width <= rect.width - 8, left: x - width >= 8};
+  if (tool && !(fits.right && dx >= 0) && !(fits.left && dx < 0)) {
+    const cx = p.cx - rect.left;
+    const cy = p.cy - rect.top;
+    const clearance = 124;  // past the arrows' letters
+    const below = cy + clearance + height <= rect.height - 8;
+    const left = Math.min(rect.width - 8 - width, Math.max(8, cx - width / 2));
+    const top = (dy >= 0 && below) || cy - clearance - height < 8 ? cy + clearance : cy - clearance - height;
+    tag.style.left = `${left}px`;
+    tag.style.top = `${Math.min(rect.height - 8 - height, Math.max(8, top))}px`;
+    return;
+  }
   let side = dx < 0 ? "left" : "right";
   if (side === "right" && x + width > rect.width - 8) side = "left";
   else if (side === "left" && x - width < 8) side = "right";
@@ -314,7 +389,14 @@ function renderPlan(live) {
     planChipsKey = "";
     return;
   }
-  const now = (field) => (live && Number.isFinite(status.joints?.[field]) ? fmt(status.joints[field], 1) : "?");
+  const nowValue = (field) => (live && Number.isFinite(status.joints?.[field]) ? status.joints[field] : null);
+  // A gizmo drag can turn a joint by a hair: print enough digits that the two ends of a chip differ.
+  const digitsFor = (field) => {
+    let digits = 1;
+    while (digits < 3 && nowValue(field) !== null && fmt(nowValue(field), digits) === fmt(plan[field], digits)) digits += 1;
+    return digits;
+  };
+  const now = (field) => (nowValue(field) === null ? "?" : fmt(nowValue(field), digitsFor(field)));
   const chipsKey = fields.map((field) => `${field}:${plan[field]}:${now(field)}`).join("|");
   if (chipsKey !== planChipsKey) {
     planChipsKey = chipsKey;
@@ -327,7 +409,7 @@ function renderPlan(live) {
       remove.dataset.field = field;
       remove.setAttribute("aria-label", `Take J${joint.n} out of the plan`);
       const reading = el("span", "reading");
-      reading.append(el("span", "from", `${now(field)} `), `\u2192 ${fmt(plan[field], 1)}${joint.unit}`);
+      reading.append(el("span", "from", `${now(field)} `), `\u2192 ${fmt(plan[field], digitsFor(field))}${joint.unit}`);
       chip.append(el("span", "tag", `J${joint.n}`), reading, remove);
       return chip;
     }));
@@ -336,9 +418,11 @@ function renderPlan(live) {
   const pace = fields.every((field) => field === "j3_mm") ? `${speed} mm/s`
     : fields.includes("j3_mm") ? `${speed}\u00b0/s (J3 ${speed} mm/s)` : `${speed}\u00b0/s`;
   const names = listOf(fields.map((field) => `J${JOINT[field].n}`));
+  // With J1 or J2 turning, the tool swings round on a curve, not a straight line; the view draws it.
+  const curve = fields.includes("j1_deg") || fields.includes("j2_deg") ? ", the tool along the drawn path" : "";
   $("planNote").textContent = planSending ? "Sending the plan\u2026" : planSentAt ? "Moving to the plan\u2026"
     : !planCheck.clear ? `Blocked: ${planCheck.reason}.`
-    : `Moves ${names}${fields.length > 1 ? " together" : ""} at ${pace}, the joint speed.`;
+    : `Moves ${names}${fields.length > 1 ? " together" : ""} at ${pace}, the joint speed${curve}.`;
   $("plan").classList.toggle("blocked", !planCheck.clear);
   $("planMove").disabled = planSending;
   $("planMove").setAttribute("aria-disabled", String(!canMove()));
@@ -434,7 +518,9 @@ function stateOf(s, live) {
     if (!planCheck.clear) return {tone: "ready", word: "READY", line: `The plan is blocked: ${planCheck.reason}. Change it, or Clear.`};
     return {tone: "ready", word: "READY", line: `${names} planned. Press Move to send ${fields.length > 1 ? "them" : "it"}, or Clear.`};
   }
-  return {tone: "ready", word: "READY", line: "Idle. Jog a joint, drag a ring in the 3D view, or send a move."};
+  return {tone: "ready", word: "READY", line: dragMode === "tool"
+    ? "Idle. Jog a joint, drag the tool's gizmo in the 3D view, or send a move."
+    : "Idle. Jog a joint, drag a ring in the 3D view, or send a move."};
 }
 
 function renderMessage() {
@@ -478,18 +564,22 @@ function renderChannels(live, ready, goalJoints) {
     const {field, unit} = channel.joint;
     const value = status?.joints?.[field];
     channel.value.textContent = Number.isFinite(value) ? `${fmt(value)}${unit}` : "\u2013";
-    const pv = preview && preview.field === field ? preview : null;
+    const pv = !preview ? null
+      : preview.kind === "tool" ? (Number.isFinite(value) && Math.abs(preview.pose[field] - value) > 0.005 ? preview : null)
+      : preview.field === field ? preview : null;
     const planned = plan && Number.isFinite(plan[field]) ? plan[field] : null;
-    const aim = pv ? pv.to : planned;
+    const aim = pv ? (pv.kind === "tool" ? pv.pose[field] : pv.to) : planned;
     const goal = goalJoints?.[field];
     const travelling = Number.isFinite(goal) && Number.isFinite(value) && Math.abs(goal - value) > 0.005;
     let text = "\u00a0";
     let kind = "quiet";
     let mark = null;
     if (aim !== null) {
-      // A drag in progress is amber, like a held key; a staged plan is grey with a dashed frame; red when blocked.
-      const blocked = pv ? !pv.clear || pv.limited : !planCheck.clear;
-      text = pv ? `\u2192 ${fmt(aim, 1)}${unit}${pv.limited ? " at limit" : ""}` : `plan \u2192 ${fmt(aim, 1)}${unit}`;
+      // A drag in progress is amber, like a held key; a staged plan is grey with a dashed frame; red when blocked, or
+      // for the joint a drag has pushed to its limit.
+      const atLimit = pv ? (pv.kind === "tool" ? pv.limitField === field : pv.limited) : false;
+      const blocked = pv ? !pv.clear || atLimit : !planCheck.clear;
+      text = pv ? `\u2192 ${fmt(aim, 1)}${unit}${atLimit ? " at limit" : ""}` : `plan \u2192 ${fmt(aim, 1)}${unit}`;
       kind = [pv ? "" : "planned", blocked ? "blocked" : ""].join(" ").trim();
       mark = aim;
     } else if (travelling) {
@@ -505,6 +595,35 @@ function renderChannels(live, ready, goalJoints) {
     channel.cap.hidden = !Number.isFinite(value);
     if (Number.isFinite(value)) placeOnMeter(channel.cap, channel, value);
     for (const key of channel.keys) key.disabled = !ready;
+  }
+}
+
+// The pose windows: the SDK's pose and the tool's yaw, and under each, where a drag (amber), the plan (grey, "plan →";
+// red when blocked) or the joint move under way (amber) puts the tool, worked out from those joints.
+function renderPose(live, goalJoints) {
+  const now = status?.pose ? {...status.pose, yaw_deg: status.toolYawDeg} : null;
+  let aimJoints = null;
+  let kind = "";
+  if (live && now && status.joints) {
+    const staged = {...status.joints};
+    for (const field of stagedFields(plan)) staged[field] = plan[field];
+    if (preview) {
+      aimJoints = preview.kind === "tool" ? preview.pose : {...staged, [preview.field]: preview.to};
+      kind = !preview.clear || preview.limited ? "blocked" : "";
+    } else if (stagedFields(plan).length) {
+      aimJoints = staged;
+      kind = planCheck.clear ? "planned" : "planned blocked";
+    } else if (goalJoints) {
+      aimJoints = goalJoints;
+    }
+  }
+  const aim = aimJoints ? toolPose(aimJoints, CONFIG.armLengthsMm) : null;
+  for (const [key, valueId, aimId] of POSE_WINDOWS) {
+    $(valueId).textContent = fmt(now?.[key]);
+    const target = aim && Number.isFinite(now?.[key]) && Math.abs(aim[key] - now[key]) > 0.05 ? aim[key] : null;
+    const line = $(aimId);
+    line.className = `aim ${target === null ? "quiet" : kind}`.trim();
+    line.textContent = target === null ? "\u00a0" : `${kind.startsWith("planned") ? "plan " : ""}\u2192 ${fmt(target, 1)}`;
   }
 }
 
@@ -563,13 +682,7 @@ function renderOnce() {
 
   renderChannels(live, ready, status?.goal?.jogGoal ?? status?.goal?.joints ?? null);
   renderPlan(live);
-
-  const pose = status?.pose;
-  $("poseX").textContent = fmt(pose?.x_mm);
-  $("poseY").textContent = fmt(pose?.y_mm);
-  $("poseZ").textContent = fmt(pose?.z_mm);
-  $("poseR").textContent = fmt(pose?.r_deg);
-  $("toolYaw").textContent = fmt(status?.toolYawDeg);
+  renderPose(live, status?.goal?.jogGoal ?? status?.goal?.joints ?? null);
   const check = $("modelCheck");
   if (status?.modelCheck) {
     check.className = status.modelCheck.ok ? "bank-note" : "bank-note bad";
@@ -645,6 +758,7 @@ function startMonitor() {
   }
   import("./view.js")
     .then(({createView}) => createView($("screen"), CONFIG, {
+      mode: dragMode,
       onPreview,
       onRelease,
       onHover,
@@ -657,6 +771,7 @@ function startMonitor() {
       view = created;
       note.hidden = true;
       $("viewReset").disabled = false;
+      for (const key of [$("modeJoints"), $("modeTool")]) key.disabled = false;
       if (!view.hasCad) {
         showCadNote(view.cadError ? `Simple shapes: the CAD meshes didn't load (${view.cadError}).`
           : CONFIG.meshNote ? `Simple shapes: ${CONFIG.meshNote}.`
@@ -731,6 +846,31 @@ $("moveLinear").addEventListener("click", () => {
 });
 $("changeHand").addEventListener("click", () => post("/api/change_hand", {speed: detent("speed")}));
 $("viewReset").addEventListener("click", () => view?.resetView());
+
+// What dragging in the 3D view moves: the joints' handles, or the gizmo at the tool. Remembered on this PC.
+function syncDragMode() {
+  const tool = dragMode === "tool";
+  $("modeJoints").setAttribute("aria-pressed", String(!tool));
+  $("modeTool").setAttribute("aria-pressed", String(tool));
+  $("screenHelp").textContent = HELP[dragMode];
+}
+
+function setDragMode(next) {
+  if (next === dragMode) return;
+  cancelHolds();
+  dragMode = next;
+  try {
+    localStorage.setItem(DRAG_MODE_KEY, next);
+  } catch {
+    // storage is off: the mode lasts until the page closes
+  }
+  syncDragMode();
+  if (view) view.setMode(next);
+  render();
+}
+
+$("modeJoints").addEventListener("click", () => setDragMode("joints"));
+$("modeTool").addEventListener("click", () => setDragMode("tool"));
 $("planJoints").addEventListener("click", (event) => {
   const button = event.target.closest("button[data-field]");
   if (!button || planSending || planSentAt) return;
@@ -758,8 +898,10 @@ $("cadCopy").addEventListener("click", async () => {
 });
 
 // For automated checks (and the console): the page's state and the 3D view.
-window.zarmPanel = {view: () => view, plan: () => plan, preview: () => preview, status: () => status, planCheck: () => planCheck};
+window.zarmPanel = {view: () => view, plan: () => plan, preview: () => preview, status: () => status, planCheck: () => planCheck,
+                    mode: () => dragMode};
 
+syncDragMode();
 render();
 poll();
 startMonitor();

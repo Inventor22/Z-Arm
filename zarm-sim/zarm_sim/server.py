@@ -69,7 +69,7 @@ DEFAULT_PORT = 8770  # umbratek-code's jog panel uses 8765
 ARM_LENGTHS_MM = (220.0, 200.0)  # Z-Arm 2442; passed explicitly so it holds whatever the SDK's default
 WEB_DIR = Path(__file__).resolve().parent / "web"
 PAGE = WEB_DIR / "index.html"
-STATIC_FILES = {"app.js", "view.js", "urdf.js", "plan.js", "style.css"}
+STATIC_FILES = {"app.js", "view.js", "urdf.js", "plan.js", "kinematics.js", "gizmo.js", "style.css"}
 STATIC_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8"}
 SDK_FIELDS = ("j1_deg", "j2_deg", "j3_mm", "j4_deg")
 JOINT_STEPS = (0.1, 0.5, 1.0, 5.0, 10.0)  # deg per click for J1, J2, J4; mm for J3

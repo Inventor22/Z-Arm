@@ -125,7 +125,8 @@ class PageAndStatusTests(ServerTestCase):
     def test_static_files_models_and_envelope(self):
         status, _, body = self.client.request("GET", f"/model/{URDF_NAME}")
         self.assertEqual((status, body), (200, (MODELS_DIR / URDF_NAME).read_bytes()))
-        for path in ("/web/app.js", "/web/view.js", "/web/urdf.js", "/web/plan.js", "/web/style.css"):
+        for path in ("/web/app.js", "/web/view.js", "/web/urdf.js", "/web/plan.js", "/web/kinematics.js", "/web/gizmo.js",
+                     "/web/style.css"):
             self.assertEqual(self.client.request("GET", path)[0], 200, path)
         for path in ("/web/../server.py", "/web/index.html", "/vendor/three/build/three.module.js", "/meshes/j1_arm.stl",
                      "/model/../zarm_sim/server.py"):

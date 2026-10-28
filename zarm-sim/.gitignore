@@ -1,0 +1,7 @@
+# three.js for the 3D view: zarm_sim/server.py downloads it on its first run and checks its hashes
+vendor/
+# Hitbot's CAD and meshes made from it by scripts/fetch_cad_meshes.py. The CAD has no published license: never commit.
+cache/
+*.egg-info/
+build/
+dist/

@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zarm-sim"
+version = "0.1.0"
+description = "Z-Arm robot model (URDF and MuJoCo MJCF) and a browser simulator view over zarm-sdk's simulated backend"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "GPL-3.0" }
+# zarm-sdk is found in the sibling zarm-sdk/ folder; install it too if you use zarm-sim from elsewhere.
+dependencies = []
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Robotics",
+]
+
+[project.optional-dependencies]
+mujoco = ["mujoco>=3.0"]
+
+[tool.setuptools]
+packages = ["zarm_sim"]
+
+[tool.setuptools.package-data]
+zarm_sim = ["web/*"]

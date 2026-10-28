@@ -66,10 +66,10 @@ starts `server.exe` from its own directory.
 | `share.dll` | shared memory between the DLL and the server |
 | `server.exe` | TCP server the arm connects to; `net_port_initial` starts it |
 
-A complete x64 set is already in this repository at `Z-Arm Sliders/Z-Arm Sliders/Lib/` (moving to
-`legacy/csharp/Z-Arm Sliders/Z-Arm Sliders/Lib/`). Hitbot's binaries have no published license, so
-don't add more copies to the repository. Point the SDK at that folder, or at a local copy outside
-version control. (`zarm-sdk/.gitignore` ignores `vendor/`, `*.dll` and `*.exe`.)
+A complete x64 set is already in this repository at `legacy/csharp/Z-Arm Sliders/Z-Arm Sliders/Lib/`.
+Hitbot's binaries have no published license, so don't add more copies to the repository. Point the
+SDK at that folder, or at a local copy outside version control. (`zarm-sdk/.gitignore` ignores
+`vendor/`, `*.dll` and `*.exe`.)
 
 **Network**: set the PC's Ethernet adapter to `192.168.0.100` (mask `255.255.255.0`), as the legacy
 README describes, and allow `server.exe` through the Windows Firewall when prompted.
@@ -77,7 +77,7 @@ README describes, and allow `server.exe` through the Windows Firewall when promp
 ```python
 from zarm import JointPositions, ZArm, ZArmConfig
 
-lib = r"C:\path\to\Z-Arm\Z-Arm Sliders\Z-Arm Sliders\Lib"
+lib = r"C:\path\to\Z-Arm\legacy\csharp\Z-Arm Sliders\Z-Arm Sliders\Lib"
 with ZArm.native(lib, ZArmConfig(card_id=59)) as arm:   # 59: the id the legacy code used (assumed)
     arm.connect()       # starts server.exe if needed, waits for the arm
     arm.initialize()    # vendor initialization: energizes the arm
@@ -201,13 +201,13 @@ a read-only check of [assumption 7](#7-kinematics-a-z-arm-2442-with-220-mm-and-2
 
 ```powershell
 # Static checks only: touches nothing
-py -3.12 scripts\hardware_smoke_test.py --library-dir "..\Z-Arm Sliders\Z-Arm Sliders\Lib" --preflight-only
+py -3.12 scripts\hardware_smoke_test.py --library-dir "..\legacy\csharp\Z-Arm Sliders\Z-Arm Sliders\Lib" --preflight-only
 
 # Connect and read state (no motion)
-py -3.12 scripts\hardware_smoke_test.py --library-dir "..\Z-Arm Sliders\Z-Arm Sliders\Lib" --card-id 59 --i-am-at-the-estop --connect
+py -3.12 scripts\hardware_smoke_test.py --library-dir "..\legacy\csharp\Z-Arm Sliders\Z-Arm Sliders\Lib" --card-id 59 --i-am-at-the-estop --connect
 
 # Also initialize, then rotate J4 by 5 degrees and back at 10 deg/s (asks you to type MOVE)
-py -3.12 scripts\hardware_smoke_test.py --library-dir "..\Z-Arm Sliders\Z-Arm Sliders\Lib" --card-id 59 --i-am-at-the-estop --connect --initialize --allow-motion
+py -3.12 scripts\hardware_smoke_test.py --library-dir "..\legacy\csharp\Z-Arm Sliders\Z-Arm Sliders\Lib" --card-id 59 --i-am-at-the-estop --connect --initialize --allow-motion
 ```
 
 ## Default assumptions (unverified on hardware)
@@ -220,7 +220,7 @@ already reports on assumption 7.
 ### 1. The arm's card id is 59
 
 * **Evidence:** the legacy C# code connects to card 59 (`new ZArm(59)` and `get_robot(59)` in
-  `ZArm Class Framework/ZArm Class Framework/Program.cs`). It's available as `zarm.LEGACY_CARD_ID`.
+  `legacy/csharp/ZArm Class Framework/ZArm Class Framework/Program.cs`). It's available as `zarm.LEGACY_CARD_ID`.
 * **In the code:** nothing depends on it. `ZArmConfig.card_id` defaults to `None`, which discovers
   the one connected arm and refuses to guess between several. The smoke test requires `--card-id`.
 * **Override:** `ZArmConfig(card_id=...)`.
@@ -251,7 +251,7 @@ already reports on assumption 7.
 
 * **Assumption:** in joint and Cartesian commands alike, `r` is J4's own angle. The tool's yaw in the
   base frame is then J1 + J2 + r (`zarm.kinematics.tool_yaw_deg`).
-* **Evidence:** the vendor header copy in this repository (`ScaraTesting/ScaraMockDll/Scara.h`) calls
+* **Evidence:** the vendor header copy in this repository (`legacy/csharp/ScaraTesting/ScaraMockDll/Scara.h`) calls
   `rotation` the "angle value of joint 4" in `get_scara_param`, `set_angle_move` and the Cartesian
   `set_position_move`. [jjh1214/hitbot_sim](https://github.com/jjh1214/hitbot_sim), which drove a
   real Z-Arm from a URDF, passes the URDF wrist joint angle straight through as `r`

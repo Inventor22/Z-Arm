@@ -48,7 +48,7 @@ class VendorBundle:
 VERIFIED_BUNDLES: Tuple[VendorBundle, ...] = (
     VendorBundle(
         "x64 set in this repository's legacy folders "
-        "('Z-Arm Sliders/Z-Arm Sliders/Lib' and 'ZArmUnityAdapter/ZArmUnityAdapter/Lib')",
+        "('legacy/csharp/Z-Arm Sliders/Z-Arm Sliders/Lib' and 'legacy/csharp/ZArmUnityAdapter/ZArmUnityAdapter/Lib')",
         {
             DLL_NAME: "c8844f3c35ad581f8f0776f7e135aa988ba45e1b51ad7eaae16776aaa0d82abe",
             "share.dll": "a9fb4b1d152bf1cb7c3e0b595b39e98d36c690530fadf31dc20c0b1d707645c2",

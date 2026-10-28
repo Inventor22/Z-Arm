@@ -9,7 +9,7 @@ established, and how sure it is. The bindings live in [`zarm/native.py`](../zarm
 | | |
 |---|---|
 | File | `small_scara_interface.dll`, x64, plain C exports (no CLR) |
-| Location in this repo | `Z-Arm Sliders/Z-Arm Sliders/Lib/` (same files in `ZArmUnityAdapter/ZArmUnityAdapter/Lib/`; moving to `legacy/csharp/`) |
+| Location in this repo | `legacy/csharp/Z-Arm Sliders/Z-Arm Sliders/Lib/` (same files in `legacy/csharp/ZArmUnityAdapter/ZArmUnityAdapter/Lib/`) |
 | Exports | 184: 84 mangled `ControlBean` methods, 32 JNI entry points, 68 plain C functions |
 | Companions | `share.dll` (shared memory) and `server.exe` (TCP server), both next to the DLL |
 

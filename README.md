@@ -1,15 +1,32 @@
-## Getting started with Z-Arm
+# Z-Arm
 
-1. Download instructional videos from: https://drive.google.com/file/d/1sNxaI04Kmc81_ty_rf0sX4ocHy2zPodI/view
-2. Download and extract "_Hitbot2.9.2-CCD.4 - release.rar_" from https://drive.google.com/drive/folders/1JE9ChiKHla_VIUCflrZ7iTQbX0Gr3jJS
-3. Set your IP Address to 192.168.0.100, Gateway to 255.255.255.0, and DNS to 192.168.0.1, according to video _3.1 Connection with PC_.
-4. Plug in power cable to Z-Arm.
-5. Plug in ethernet cable from PC to Z-Arm.
-6. Open _Z-Arm Sliders.sln_ in Visual Studio, run the program.
-7. Hit 'Connect'. You may need to retry.  Allow public and private access if you receive a firewall prompt.
-8. Wait for the program to initialize and connect to the Z-Arm.
-8. Try moving one of the sliders, if the arm moves, great! If not, follow step 9.
-9. Make note of your Z-Arm id in the _Z-Arm Sliders_ program. Close the program. Navigate to _Hitbot2.9.2-CCD.4 - release_ and run _Joint_home.exe_. Calibrate each joint one by one. Retry step 6. If the arm does not move, unplug power and retry.
+Python control software, a simulator and the original C# experiments for a Hitbot Z-Arm SCARA
+robot (assumed to be a Z-Arm 2442 with a 310 mm Z axis).
 
-## Troubleshooting ##
-I'll upload a PDF a little later.
+| Folder | What it is |
+| --- | --- |
+| [`zarm-sdk/`](zarm-sdk/README.md) | A typed Python SDK over Hitbot's native library, with a simulated arm. Standard library only. |
+| [`zarm-sim/`](zarm-sim/README.md) | URDF and MuJoCo models of the arm, and a browser view of the simulated arm. |
+| [`legacy/csharp/`](legacy/csharp/README.md) | The original C# and C++ projects and their vendor libraries, kept for reference. |
+
+## Try the simulator
+
+```powershell
+cd zarm-sim
+py -3.12 -m zarm_sim.server --open    # http://127.0.0.1:8770
+```
+
+Drag the joint rings, the Z handle or (in Tool mode) the tool gizmo to plan a pose, then press Move.
+The first start downloads three.js; Hitbot's CAD meshes are optional
+(`uv run zarm-sim/scripts/fetch_cad_meshes.py`). See the [zarm-sim README](zarm-sim/README.md).
+
+## Status and safety
+
+Nothing here has driven the real arm yet. The hardware details the SDK and the simulator rely on
+are documented assumptions, listed in the [zarm-sdk README](zarm-sdk/README.md#default-assumptions-unverified-on-hardware).
+The first hardware step is the SDK's opt-in smoke test, with someone at the emergency stop.
+
+The legacy applications can move real hardware and are not a verified modern control or safety
+system. The main WinForms solution is `legacy\csharp\Z-Arm Sliders\Z-Arm Sliders.sln`; the
+[legacy project guide](legacy/csharp/README.md) has the project inventory, historical build
+requirements and the original setup notes.
